@@ -1,0 +1,7 @@
+
+
+def u8: a := 1
+
+def u8: b := 7
+
+def u8: c := add 1 7
