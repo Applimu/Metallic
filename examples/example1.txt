@@ -1,0 +1,8 @@
+
+def Int: seven := 7
+
+def Int: negative_twenty_one := -21
+
+def Int : yeah := add seven
+
+def Int: main := yeah negative_twenty_one
