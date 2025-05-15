@@ -1,0 +1,4 @@
+
+
+def fun Int Int: f := fn Int: x do add x 5
+	fn Type: T do fn Type: Y do fun T Y
