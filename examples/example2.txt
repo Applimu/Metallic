@@ -1,4 +1,8 @@
 
 
-def fun Int Int: f := fn Int: x do add x 5
-	fn Type: T do fn Type: Y do fun T Y
+def fun Int (fun Type (fun Type Type)): f := fn Int: x do
+  fn Type: T do
+  fn Type: Y do
+	fun T Y
+
+def Type: main := f -2 Int Unit

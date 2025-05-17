@@ -1,0 +1,13 @@
+
+
+def fun (fun Int Int) (fun (fun Int Int) (fun Int Int)) : compose :=
+	fn (fun Int Int): f do
+	fn (fun Int Int): g do
+	fn Int: x do
+	f (g x)
+
+
+eval compose (add 5) (
+		compose (add 6) (fn Int: _ do -400 )
+	 )
+

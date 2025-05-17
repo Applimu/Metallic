@@ -2,7 +2,7 @@
 
 use std::{
     iter::{Peekable, once},
-    str::SplitWhitespace,
+    str::{Chars, SplitWhitespace},
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -10,6 +10,7 @@ pub enum Keyword {
     Def,
     // Enum,
     Fn,
+    Eval,
     // Let,
     // In,
     // Match,
@@ -18,29 +19,6 @@ pub enum Keyword {
     Do,
     Eq,
     Colon,
-}
-
-// turns a sequence of numeric characters into an integer
-// first character assumed to be a number, - or +
-pub fn tokenize_number(numbers: &str) -> Option<Token> {
-    // essentially /[+-]?[0-9]+/
-    let mut chars: Box<dyn Iterator<Item = char>> = Box::new(numbers.chars());
-    let first: char = chars.next()?;
-    if first != '-' && first != '+' {
-        // if the first character is not a sign, then append it to the beginning
-        chars = Box::new(once(first).chain(chars));
-    } else if numbers.len() == 1 {
-        // If this is only a '+' or '-', parse it as an operator
-        return Some(Token::Identifier(numbers.to_string()));
-    }
-
-    let mut number: i64 = 0;
-    for digit in chars {
-        let d = digit.to_digit(10)? as i64;
-        number = (number * 10) + d;
-    }
-
-    Some(Token::Number(if first == '-' { -number } else { number }))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,62 +34,101 @@ pub enum Token {
 // TODO: swap SplitWhitespace with different system
 // TODO: add comments
 // TODO: allow for stuff like line numbers for error messages
+#[derive(Debug, Clone)]
 pub struct Tokens<'a> {
     src: SplitWhitespace<'a>,
-    is_bad: bool,
     next_to_read: &'a str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseError<'a> {
+    NotANumber(&'a str),
+    UnexpectedToken(Token),
+    UnexpectedEOF,
+    BadParenL,
+    BadParenR,
+    EmptyExpression,
+    UnrecognizedToken(&'a str),
+}
+
+// turns a sequence of numeric characters into an integer
+// first character assumed to be a number, - or +
+pub fn tokenize_number<'a>(numbers: &'a str) -> (Result<Token, ParseError<'a>>, &'a str) {
+    // dbg!(numbers);
+    // essentially /[+-]?[0-9]*/
+    let mut chars: Peekable<Chars<'a>> = numbers.chars().peekable();
+    let first: char = match chars.peek() {
+        Some(c) => *c,
+        None => return (Err(ParseError::NotANumber(&numbers)), numbers),
+    };
+    if (first == '-' || first == '+') {
+        chars.next();
+        if numbers.len() == 1 {
+            // If this is only a '+' or '-', parse it as an operator
+            return (Ok(Token::Identifier(numbers.to_string())), "");
+        }
+    } else if !first.is_numeric() && first != '-' && first != '+' {
+        return (Err(ParseError::NotANumber(numbers)), numbers);
+    }
+
+    let mut number: i64 = 0;
+    let mut chars_eaten = if first == '-' || first == '+' { 1 } else { 0 };
+    for digit in chars {
+        match digit.to_digit(10) {
+            Some(d) => {
+                chars_eaten += 1;
+                number = (number * 10) + (d as i64);
+            }
+            None => {
+                break;
+            }
+        }
+    }
+
+    (
+        Ok(Token::Number(if first == '-' { -number } else { number })),
+        &numbers[chars_eaten..],
+    )
+}
+
 impl<'a> Iterator for Tokens<'a> {
-    // TODO: make this a Result for error messages
-    type Item = Token;
+    type Item = Result<Token, ParseError<'a>>;
 
     // in this function as we parse, we usually need to set self.next_to_read = ""
     // to show that we have eaten the input and actually parsed it
-    fn next(&mut self) -> Option<Token> {
+    fn next(&mut self) -> Option<Result<Token, ParseError<'a>>> {
         // this doesnt account for things that are put *right* next to eachother
 
         while self.next_to_read.len() == 0 {
             self.next_to_read = self.src.next()?
         }
+        // println!("Making next token!: Tokenizer state: {:?}", self);
         // find next string which isnt empty
 
         match self.next_to_read {
             "def" => {
                 self.next_to_read = "";
-                return Some(Token::Keyword(Keyword::Def));
+                return Some(Ok(Token::Keyword(Keyword::Def)));
             }
-            // "enum" => {
-            //     self.next_to_read = "";
-            //     return Some(Token::Keyword(Keyword::Let));
-            // }
-            // "let" => {
-            //     self.next_to_read = "";
-            //     return Some(Token::Keyword(Keyword::Let));
-            // }
-            // "match" => {
-            //     self.next_to_read = "";
-            //     return Some(Token::Keyword(Keyword::Match));
-            // }
-            // "case" => {
-            //     self.next_to_read = "";
-            //     return Some(Token::Keyword(Keyword::Case));
-            // }
+            "eval" => {
+                self.next_to_read = "";
+                return Some(Ok(Token::Keyword(Keyword::Eval)));
+            }
             "fn" => {
                 self.next_to_read = "";
-                return Some(Token::Keyword(Keyword::Fn));
+                return Some(Ok(Token::Keyword(Keyword::Fn)));
             }
             "do" => {
                 self.next_to_read = "";
-                return Some(Token::Keyword(Keyword::Do));
+                return Some(Ok(Token::Keyword(Keyword::Do)));
             }
             ":=" => {
                 self.next_to_read = "";
-                return Some(Token::Keyword(Keyword::Eq));
+                return Some(Ok(Token::Keyword(Keyword::Eq)));
             }
             ":" => {
                 self.next_to_read = "";
-                return Some(Token::Keyword(Keyword::Colon));
+                return Some(Ok(Token::Keyword(Keyword::Colon)));
             }
             _ => (),
         }
@@ -120,9 +137,9 @@ impl<'a> Iterator for Tokens<'a> {
         let first_char: char = self.next_to_read.chars().next().unwrap();
 
         if first_char.is_numeric() || first_char == '-' || first_char == '+' {
-            let parsed_str: Option<Token> = tokenize_number(self.next_to_read);
-            self.next_to_read = "";
-            return parsed_str;
+            let result = tokenize_number(&self.next_to_read);
+            self.next_to_read = result.1;
+            return Some(result.0);
         }
 
         if first_char.is_alphabetic() || first_char == '_' {
@@ -136,16 +153,15 @@ impl<'a> Iterator for Tokens<'a> {
             }
             let (var, rest) = self.next_to_read.split_at(idx);
             self.next_to_read = rest;
-            return Some(Token::Identifier(var.to_owned()));
+            return Some(Ok(Token::Identifier(var.to_owned())));
         } else if first_char == ')' {
             self.next_to_read = &self.next_to_read[1..];
-            return Some(Token::ParenR);
+            return Some(Ok(Token::ParenR));
         } else if first_char == '(' {
             self.next_to_read = &self.next_to_read[1..];
-            return Some(Token::ParenL);
+            return Some(Ok(Token::ParenL));
         } else {
-            self.is_bad = true;
-            return None;
+            return Some(Err(ParseError::UnrecognizedToken(self.next_to_read)));
         }
     }
 }
@@ -153,20 +169,16 @@ impl<'a> Iterator for Tokens<'a> {
 pub fn tokenize<'a>(raw_src: &'a str) -> Tokens<'a> {
     let mut src = raw_src.split_whitespace();
     let next_to_read = src.next().unwrap();
-    Tokens {
-        src,
-        is_bad: false,
-        next_to_read,
-    }
+    Tokens { src, next_to_read }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Expr {
-    Apply(Box<Expr>, Box<Expr>),
+pub enum UnresolvedExpr {
+    Apply(Box<UnresolvedExpr>, Box<UnresolvedExpr>),
     Function {
         name: String,
-        input_type: Box<Expr>,
-        output: Box<Expr>,
+        input_type: Box<UnresolvedExpr>,
+        output: Box<UnresolvedExpr>,
     },
     Variable(String),
     IntLit(i64),
@@ -177,52 +189,65 @@ pub enum Expr {
 pub struct Binding {
     pub(crate) var_name: String,
     // TODO: make type_sig optional
-    pub(crate) type_sig: Expr,
-    pub(crate) value: Expr,
+    pub(crate) type_sig: UnresolvedExpr,
+    pub(crate) value: UnresolvedExpr,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum Command {
-    Binding(Binding),
+    Definition(Binding),
+    Eval(UnresolvedExpr),
 }
 
-pub struct Parser<T>
+pub struct Parser<'a, T>
 where
-    T: Iterator<Item = Token>,
+    T: Iterator<Item = Result<Token, ParseError<'a>>>,
 {
     tokens: Peekable<T>,
 }
 
-impl<T> Iterator for Parser<T>
+impl<'a, T> Iterator for Parser<'a, T>
 where
-    T: Iterator<Item = Token>,
+    T: Iterator<Item = Result<Token, ParseError<'a>>>,
 {
-    // TODO: make this a result for better errors
-    type Item = Command;
+    type Item = Result<Command, ParseError<'a>>;
 
-    fn next(&mut self) -> Option<Command> {
+    fn next(&mut self) -> Option<Result<Command, ParseError<'a>>> {
         // assert that the first word was def
         match self.tokens.next()? {
-            Token::Keyword(Keyword::Def) => self.parse_binding().map(Command::Binding),
-            _ => None,
+            Ok(Token::Keyword(Keyword::Def)) => Some(self.parse_binding().map(Command::Definition)),
+            Ok(Token::Keyword(Keyword::Eval)) => Some(self.parse_expr().map(Command::Eval)),
+            Ok(t) => Some(Err(ParseError::UnexpectedToken(t))),
+            Err(e) => Some(Err(e)),
         }
     }
 }
 
-impl<T> Parser<T>
+impl<'a, T> Parser<'a, T>
 where
-    T: Iterator<Item = Token>,
+    T: Iterator<Item = Result<Token, ParseError<'a>>>,
 {
+    fn get_next_token(&mut self) -> Result<Token, ParseError<'a>> {
+        self.tokens.next().ok_or(ParseError::UnexpectedEOF)?
+    }
+    fn peek_next_token(&mut self) -> Result<Option<&Token>, ParseError<'a>> {
+        match self.tokens.peek() {
+            Some(Ok(t)) => Ok(Some(t)),
+            Some(Err(e)) => Err(e.clone()),
+            None => Ok(None),
+        }
+    }
     // TODO: make this a result type
-    fn parse_expr(&mut self) -> Option<Expr> {
+    pub fn parse_expr(&mut self) -> Result<UnresolvedExpr, ParseError<'a>> {
         // helper function for thing
-        fn push_as_arg(paren_stack: &mut Vec<Expr>, arg: Expr) {
+        fn push_as_arg(paren_stack: &mut Vec<UnresolvedExpr>, arg: UnresolvedExpr) {
             match paren_stack.pop() {
-                Some(e) => paren_stack.push(Expr::Apply(Box::new(e), Box::new(arg))),
+                Some(e) => paren_stack.push(UnresolvedExpr::Apply(Box::new(e), Box::new(arg))),
                 None => paren_stack.push(arg),
             }
         }
 
-        let mut paren_stack: Vec<Expr> = Vec::new();
+        let mut paren_stack: Vec<UnresolvedExpr> = Vec::new();
         let mut depth: u32 = 0;
         loop {
             // println!(
@@ -230,32 +255,62 @@ where
             //     self.tokens.peek(),
             //     paren_stack
             // );
-            match self.tokens.peek() {
+            match self.peek_next_token()? {
                 None => break,
                 Some(Token::Keyword(Keyword::Def)) => break,
+                Some(Token::Keyword(Keyword::Eval)) => break,
                 Some(Token::Keyword(Keyword::Eq)) => break,
                 Some(Token::Keyword(Keyword::Colon)) => break,
+                Some(Token::Keyword(Keyword::Do)) => {
+                    return Err(ParseError::UnexpectedToken(Token::Keyword(Keyword::Do)));
+                }
                 Some(Token::Identifier(s)) => {
-                    push_as_arg(&mut paren_stack, Expr::Variable(s.clone()));
+                    push_as_arg(&mut paren_stack, UnresolvedExpr::Variable(s.clone()));
                     self.tokens.next(); // eat token
                 }
                 Some(Token::Number(n)) => {
-                    push_as_arg(&mut paren_stack, Expr::IntLit(*n));
+                    push_as_arg(&mut paren_stack, UnresolvedExpr::IntLit(*n));
                     self.tokens.next(); // eat token
                 }
                 Some(Token::ParenL) => {
                     depth += 1;
                     self.tokens.next(); // eat token
-                    let next_atom: Expr = loop {
-                        match self.tokens.next()? {
-                            Token::Identifier(s) => break Expr::Variable(s),
-                            Token::Number(n) => break Expr::IntLit(n),
+                    let next_atom: UnresolvedExpr = loop {
+                        match self.get_next_token()? {
+                            Token::Identifier(s) => break UnresolvedExpr::Variable(s),
+                            Token::Number(n) => break UnresolvedExpr::IntLit(n),
                             Token::ParenL => {
                                 depth += 1;
                                 continue;
                             }
-                            Token::ParenR => break Expr::Unit,
-                            _ => return None,
+                            Token::ParenR => {
+                                depth -= 1;
+                                break UnresolvedExpr::Unit;
+                            }
+                            Token::Keyword(Keyword::Fn) => {
+                                let input_type = self.parse_expr()?;
+                                match self.get_next_token()? {
+                                    Token::Keyword(Keyword::Colon) => (),
+                                    t => return Err(ParseError::UnexpectedToken(t)),
+                                };
+                                let name = match self.get_next_token()? {
+                                    Token::Identifier(s) => s,
+                                    t => return Err(ParseError::UnexpectedToken(t)),
+                                };
+
+                                match self.get_next_token()? {
+                                    Token::Keyword(Keyword::Do) => (),
+                                    t => return Err(ParseError::UnexpectedToken(t)),
+                                };
+
+                                let output = self.parse_expr()?;
+                                break UnresolvedExpr::Function {
+                                    name,
+                                    input_type: Box::new(input_type),
+                                    output: Box::new(output),
+                                };
+                            }
+                            t => return Err(ParseError::UnexpectedToken(t)),
                         }
                     };
                     paren_stack.push(next_atom);
@@ -266,73 +321,74 @@ where
                     };
                     depth -= 1;
                     self.tokens.next(); // eat this token
-                    let arg = paren_stack.pop()?;
+                    let arg = paren_stack.pop().ok_or(ParseError::BadParenR)?;
                     push_as_arg(&mut paren_stack, arg);
                 }
                 Some(Token::Keyword(Keyword::Fn)) => {
                     self.tokens.next(); // eat token
                     let input_type = self.parse_expr()?;
-                    match self.tokens.next() {
-                        Some(Token::Keyword(Keyword::Colon)) => (),
-                        _ => return None,
+                    match self.get_next_token()? {
+                        Token::Keyword(Keyword::Colon) => (),
+                        t => return Err(ParseError::UnexpectedToken(t)),
                     };
-                    let name = match self.tokens.next() {
-                        Some(Token::Identifier(s)) => s,
-                        _ => return None,
+                    let name = match self.get_next_token()? {
+                        Token::Identifier(s) => s,
+                        t => return Err(ParseError::UnexpectedToken(t)),
                     };
 
-                    match self.tokens.next() {
-                        Some(Token::Keyword(Keyword::Do)) => (),
-                        _ => return None,
+                    match self.get_next_token()? {
+                        Token::Keyword(Keyword::Do) => (),
+                        t => return Err(ParseError::UnexpectedToken(t)),
                     };
 
                     let output = self.parse_expr()?;
 
                     push_as_arg(
                         &mut paren_stack,
-                        Expr::Function {
+                        UnresolvedExpr::Function {
                             name,
                             input_type: Box::new(input_type),
                             output: Box::new(output),
                         },
                     )
                 }
-                _ => return None,
             }
         }
 
         // I think this technically allows for expressions like `f (2 (5 4`
         // which I think is okay because you know what is meant by this and closing parentheses is often a nightmare
-        let mut final_expr = paren_stack.pop()?;
+        let mut final_expr = paren_stack.pop().ok_or(ParseError::EmptyExpression)?;
         while let Some(expr) = paren_stack.pop() {
-            final_expr = Expr::Apply(Box::new(expr), Box::new(final_expr));
+            final_expr = UnresolvedExpr::Apply(Box::new(expr), Box::new(final_expr));
         }
 
-        return Some(final_expr);
+        return Ok(final_expr);
     }
 
-    // TODO: make this a result
-    fn parse_binding(&mut self) -> Option<Binding> {
-        let type_sig: Expr = self.parse_expr()?;
+    fn parse_binding(&mut self) -> Result<Binding, ParseError<'a>> {
+        let type_sig: UnresolvedExpr = self.parse_expr()?;
 
-        match self.tokens.next()? {
-            Token::Keyword(Keyword::Colon) => (),
-            _ => return None,
+        match self.tokens.next() {
+            Some(Ok(Token::Keyword(Keyword::Colon))) => (),
+            Some(Ok(t)) => return Err(ParseError::UnexpectedToken(t)),
+            Some(Err(e)) => return Err(e),
+            None => return Err(ParseError::UnexpectedEOF),
         }
 
         // assert that the next word was an identifier. This is where we would parse a pattern
-        // when we add those
-        let Token::Identifier(name) = self.tokens.next()? else {
-            return None;
+        // expression if/when I add those
+        let name = match self.get_next_token()? {
+            Token::Identifier(s) => s,
+            t => return Err(ParseError::UnexpectedToken(t)),
         };
-        match self.tokens.next()? {
+        match self.get_next_token()? {
             Token::Keyword(Keyword::Eq) => (),
-            _ => return None,
+            t => return Err(ParseError::UnexpectedToken(t)),
         }
 
-        let value: Expr = self.parse_expr()?;
+        let value: UnresolvedExpr = self.parse_expr()?;
 
-        return Some(Binding {
+        return Ok(Binding {
             var_name: name,
             type_sig,
             value,
@@ -340,16 +396,21 @@ where
     }
 }
 
-pub fn parse<T>(tokens: T) -> Parser<T>
+pub fn parse<'a, T>(tokens: T) -> Parser<'a, T>
 where
-    T: Iterator<Item = Token>,
+    T: Iterator<Item = Result<Token, ParseError<'a>>>,
 {
     Parser {
         tokens: tokens.peekable(),
     }
 }
 
-pub fn parse_src(src: &str) -> Vec<Command> {
-    let tokens = tokenize(&src);
-    return parse(tokens).collect();
+pub fn parse_src<'a>(src: &'a str) -> Result<Vec<Command>, ParseError<'a>> {
+    let mut tokens = tokenize(&src);
+
+    let mut commands = Vec::new();
+    for command in parse(&mut tokens) {
+        commands.push(command?)
+    }
+    Ok(commands)
 }
