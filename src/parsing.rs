@@ -1,7 +1,7 @@
 // hi
 
 use std::{
-    iter::{Peekable, once},
+    iter::Peekable,
     str::{Chars, SplitWhitespace},
 };
 
@@ -237,7 +237,7 @@ where
             None => Ok(None),
         }
     }
-    // TODO: make this a result type
+
     pub fn parse_expr(&mut self) -> Result<UnresolvedExpr, ParseError<'a>> {
         // helper function for thing
         fn push_as_arg(paren_stack: &mut Vec<UnresolvedExpr>, arg: UnresolvedExpr) {
@@ -275,19 +275,27 @@ where
                 Some(Token::ParenL) => {
                     depth += 1;
                     self.tokens.next(); // eat token
-                    let next_atom: UnresolvedExpr = loop {
+                    loop {
                         match self.get_next_token()? {
-                            Token::Identifier(s) => break UnresolvedExpr::Variable(s),
-                            Token::Number(n) => break UnresolvedExpr::IntLit(n),
+                            Token::Identifier(s) => {
+                                paren_stack.push(UnresolvedExpr::Variable(s));
+                                break;
+                            }
+                            Token::Number(n) => {
+                                paren_stack.push(UnresolvedExpr::IntLit(n));
+                                break;
+                            }
                             Token::ParenL => {
                                 depth += 1;
                                 continue;
                             }
                             Token::ParenR => {
                                 depth -= 1;
-                                break UnresolvedExpr::Unit;
+                                push_as_arg(&mut paren_stack, UnresolvedExpr::Unit);
+                                break;
                             }
                             Token::Keyword(Keyword::Fn) => {
+                                // just parse the function here. not the best solution
                                 let input_type = self.parse_expr()?;
                                 match self.get_next_token()? {
                                     Token::Keyword(Keyword::Colon) => (),
@@ -304,16 +312,15 @@ where
                                 };
 
                                 let output = self.parse_expr()?;
-                                break UnresolvedExpr::Function {
+                                paren_stack.push(UnresolvedExpr::Function {
                                     name,
                                     input_type: Box::new(input_type),
                                     output: Box::new(output),
-                                };
+                                });
                             }
-                            t => return Err(ParseError::UnexpectedToken(t)),
+                            bad_token => return Err(ParseError::UnexpectedToken(bad_token)),
                         }
-                    };
-                    paren_stack.push(next_atom);
+                    }
                 }
                 Some(Token::ParenR) => {
                     if depth == 0 {

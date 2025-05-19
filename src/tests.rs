@@ -1,11 +1,10 @@
-use std::rc::Rc;
-
 use crate::{
-    Expr, RuntimeVal, get_internal_expr, get_internal_val, interpret, make_program,
+    Expr, Type, get_internal_val, interpret, make_program,
     parsing::{
         Binding, Command, Keyword, ParseError, Token, UnresolvedExpr, parse, tokenize,
         tokenize_number,
     },
+    runtime::Val,
 };
 
 #[test]
@@ -234,59 +233,90 @@ fn test_parse8() {
 }
 
 #[test]
+fn test_parse9() {
+    let tokens = vec![
+        // hi () 6
+        Token::Identifier("hi".to_string()),
+        Token::ParenL,
+        Token::ParenR,
+        Token::Number(6),
+    ];
+    assert_eq!(
+        parse(tokens.into_iter().map(Ok)).parse_expr(),
+        Ok(UnresolvedExpr::Apply(
+            Box::new(UnresolvedExpr::Apply(
+                Box::new(UnresolvedExpr::Variable("hi".to_string())),
+                Box::new(UnresolvedExpr::Unit)
+            )),
+            Box::new(UnresolvedExpr::IntLit(6))
+        )),
+    );
+}
+
+#[test]
 fn test_interpret1() {
     // functions can get variables and stuff correctly
     let val: Expr = Expr::Apply(
         Box::new(Expr::Apply(
             Box::new(Expr::Function {
-                variable_name: "X".to_owned(),
-                input_type: Box::new(get_internal_expr("Type")),
+                input_type: Box::new(Expr::Value(Box::new(Val::Type(Type::Type)))),
                 output: Box::new(Expr::Function {
-                    variable_name: "Y".to_owned(),
-                    input_type: Box::new(get_internal_expr("Type")),
+                    input_type: Box::new(Expr::Value(Box::new(Val::Type(Type::Type)))),
                     output: Box::new(Expr::Local(1)),
                 }),
             }),
-            Box::new(get_internal_expr("Int")),
+            Box::new(Expr::Value(Box::new(Val::Type(Type::Int)))),
         )),
-        Box::new(get_internal_expr("Unit")),
+        Box::new(Expr::Value(Box::new(Val::Type(Type::Unit)))),
     );
 
     match interpret(&Vec::new(), val) {
-        Ok(res) => assert_eq!(res, get_internal_val("Int")),
+        Ok(res) => assert_eq!(res, Val::Type(Type::Int)),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     };
 }
 
 #[test]
 fn test_interpret2() {
-    let (name, global, evals) = make_program(
+    let (names, global, evals) = make_program(
         "def fun Int (fun Type (fun Type Type)): f := fn Int: x do
           fn Type: T do
           fn Type: Y do
-        	fun T Y",
+        	fun T Y
+        eval f -2 Int Type",
     )
     .expect("Failed to parse program");
     assert!(global.len() == 1);
-    assert!(name == vec!["f".to_string()]);
-    assert!(evals.len() == 0);
+    dbg!(&global[0]);
+    assert!(names == vec!["f".to_string()]);
+    assert!(&evals.len() == &1);
 
-    let val = Expr::Apply(
-        Box::new(Expr::Apply(
-            Box::new(Expr::Apply(
-                Box::new(Expr::Global(0)),
-                Box::new(Expr::IntLit(-2)),
-            )),
-            Box::new(get_internal_expr("Int")),
-        )),
-        Box::new(get_internal_expr("Type")),
-    );
+    let val = evals[0].clone();
 
-    let expected = RuntimeVal::Type(crate::Type::FunctionType(
+    let expected = Val::Type(crate::Type::FunctionType(
         Box::new(crate::Type::Int),
         Box::new(crate::Type::Type),
     ));
     match interpret(&global, val) {
+        Ok(v) => assert_eq!(v, expected),
+        Err(e) => panic!("Interpretting reached error: {:?}", e),
+    }
+}
+
+#[test]
+fn test_interpret3() {
+    let (names, global, evals) =
+        make_program("eval mk_pair Int (PairType Unit Int) 6 (mk_pair Unit Int () -1700)")
+            .expect("Failed to parse program");
+    assert!(names.len() == 0);
+    assert!(global.len() == 0);
+    assert!(&evals.len() == &1);
+
+    let expected: Val = Val::Pair(
+        Box::new(Val::IntLit(6)),
+        Box::new(Val::Pair(Box::new(Val::Unit), Box::new(Val::IntLit(-1700)))),
+    );
+    match interpret(&global, evals[0].clone()) {
         Ok(v) => assert_eq!(v, expected),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }

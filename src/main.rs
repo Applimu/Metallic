@@ -3,8 +3,10 @@ use std::fs::File;
 use std::io::Read;
 
 use parsing::{Binding, Command, ParseError, UnresolvedExpr};
+use runtime::{ArrFunc, Function, RuntimeError, Val, interpret};
 
 mod parsing;
+mod runtime;
 #[cfg(test)]
 mod tests;
 
@@ -13,7 +15,7 @@ mod tests;
 pub enum Expr {
     Apply(Box<Expr>, Box<Expr>),
     Function {
-        variable_name: String,
+        // variable_name: String,
         input_type: Box<Expr>,
         output: Box<Expr>,
     },
@@ -21,8 +23,8 @@ pub enum Expr {
     Local(usize),
     // reference to another defined value as index in the grid
     Global(usize),
-    // reference to internally defined value
-    Internal(usize),
+    // literal value
+    Value(Box<runtime::Val>),
     IntLit(i64),
     Unit,
 }
@@ -33,45 +35,62 @@ pub enum Type {
     Int,
     Unit,
     Bool,
+    Pair(Box<Type>, Box<Type>),
     FunctionType(Box<Type>, Box<Type>),
+    DepProd {
+        input_type: Box<Type>,
+        function: Box<ArrFunc>,
+    },
 }
 
 pub struct InternalValue {
     name: &'static str,
-    val: RuntimeVal,
+    val: Val,
 }
 
 // all the names that are resolved internally
-pub const INTERNAL_VALUES: [InternalValue; 6] = [
+pub const INTERNAL_VALUES: [InternalValue; 8] = [
     InternalValue {
         name: "Type",
-        val: RuntimeVal::Type(Type::Type),
+        val: Val::Type(Type::Type),
     },
     InternalValue {
         name: "Int",
-        val: RuntimeVal::Type(Type::Int),
+        val: Val::Type(Type::Int),
     },
     InternalValue {
         name: "add",
-        val: RuntimeVal::Add,
-    },
-    InternalValue {
-        name: "print_int",
-        val: RuntimeVal::PrintInt,
+        val: Val::Function(Function::Arrow(ArrFunc::Add)),
     },
     InternalValue {
         name: "fun",
-        val: RuntimeVal::Fun,
+        val: Val::Function(Function::Arrow(ArrFunc::Fun)),
     },
     InternalValue {
         name: "Unit",
-        val: RuntimeVal::Type(Type::Unit),
+        val: Val::Type(Type::Unit),
+    },
+    InternalValue {
+        name: "DepProd",
+        val: Val::Function(Function::DepProd(runtime::DependentProduct::DepProd)),
+    },
+    InternalValue {
+        name: "mk_pair",
+        val: Val::Function(Function::DepProd(runtime::DependentProduct::Pair)),
+    },
+    InternalValue {
+        name: "PairType",
+        val: Val::Function(Function::Arrow(ArrFunc::TypeOfMakePair)),
     },
 ];
 
 fn get_internal_idx(name: &str) -> Option<usize> {
     for (idx, internal) in INTERNAL_VALUES.iter().enumerate() {
         if internal.name == name {
+            // println!(
+            //     "Index: {} for internal value {} = {}",
+            //     idx, internal.name, name
+            // );
             return Some(idx);
         }
     }
@@ -79,17 +98,13 @@ fn get_internal_idx(name: &str) -> Option<usize> {
     None
 }
 
-fn get_internal_expr(name: &str) -> Expr {
-    Expr::Internal(get_internal_idx(name).unwrap())
-}
-
-fn get_internal_val(name: &str) -> RuntimeVal {
-    INTERNAL_VALUES[get_internal_idx(name).unwrap()].val.clone()
+fn get_internal_val(name: &str) -> Option<Val> {
+    Some(INTERNAL_VALUES[get_internal_idx(name)?].val.clone())
 }
 
 //TODO: create a better error message
 #[derive(Debug)]
-enum ResolveError {
+pub enum ResolveError {
     UnknownName(String),
 }
 
@@ -115,7 +130,7 @@ fn resolve_expr(
             let output = resolve_expr(globals, locals, *output)?;
             assert_eq!(locals.pop().unwrap(), name);
             Ok(Expr::Function {
-                variable_name: name,
+                // variable_name: name,
                 input_type: Box::new(input_type),
                 output: Box::new(output),
             })
@@ -133,8 +148,8 @@ fn resolve_expr(
                     return Ok(Expr::Global(i));
                 }
             }
-            match get_internal_idx(&s) {
-                Some(i) => Ok(Expr::Internal(i)),
+            match get_internal_val(&s) {
+                Some(v) => Ok(Expr::Value(Box::new(v))),
                 None => Err(ResolveError::UnknownName(s)),
             }
         }
@@ -188,7 +203,7 @@ impl Expr {
                 }
             }
             Expr::Function {
-                variable_name: _,
+                // variable_name: _,
                 input_type,
                 output,
             } => {
@@ -203,9 +218,9 @@ impl Expr {
             Expr::Global(i) => {
                 <Expr as Clone>::clone(&globals[i]).get_type_checked_with_locals(globals, locals)
             }
-            Expr::Internal(i) => Ok(INTERNAL_VALUES[i].val.clone().get_type(globals)),
             Expr::IntLit(_) => Ok(Type::Int),
             Expr::Unit => Ok(Type::Unit),
+            Expr::Value(val) => Ok(val.get_type(globals)),
         }
     }
 }
@@ -227,211 +242,6 @@ fn check_wellformed_types(
     }
 
     Ok(types)
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RuntimeVal {
-    Type(Type),
-    IntLit(i64),
-    Unit,
-    Closure {
-        input_type: Type,
-        captured_vars: Vec<RuntimeVal>,
-        code: Expr,
-    },
-    Bool(bool),
-    Add, // add function
-    PartialAdd(i64),
-    Fun, // function type operator
-    PartialFun(Type),
-    PrintInt,
-}
-
-// TODO: create better error messages
-#[derive(Debug)]
-pub enum RuntimeError {
-    TypeError { expected: Type, found: RuntimeVal },
-    TypesMismatch { expected: Type, found: Type },
-    NotAFunction { value: RuntimeVal },
-    NotFunctionType { func: Expr, args: Expr },
-}
-
-impl RuntimeVal {
-    fn get_as_int(self) -> Option<i64> {
-        match self {
-            RuntimeVal::IntLit(n) => Some(n),
-            _ => None,
-        }
-    }
-
-    // Unwraps this runtime value as a function, and then applies that function to
-    // the supplied argument
-    fn apply_as_fn(
-        self,
-        globals: &Vec<Expr>,
-        locals: &mut Vec<RuntimeVal>,
-        arg: RuntimeVal,
-    ) -> Result<RuntimeVal, RuntimeError> {
-        match self {
-            RuntimeVal::Closure {
-                input_type: _,
-                captured_vars: mut bound_locals,
-                code: expr,
-            } => {
-                let num_new_locals = bound_locals.len() + 1;
-                locals.append(&mut bound_locals);
-                // important that we push the new argument last as that is
-                // the 0th debrujin index
-                locals.push(arg);
-                let result = interpret_with_locals(globals, locals, expr);
-                for _ in 0..num_new_locals {
-                    locals.pop().expect("Number of locals changed????");
-                }
-
-                // dbg!(&result);
-                result
-            }
-            RuntimeVal::Add => match arg.clone().get_as_int() {
-                Some(n) => Ok(RuntimeVal::PartialAdd(n)),
-                None => Err(RuntimeError::TypeError {
-                    expected: Type::Int,
-                    found: arg.clone(),
-                }),
-            },
-            RuntimeVal::PartialAdd(n) => match arg.clone().get_as_int() {
-                Some(m) => Ok(RuntimeVal::IntLit(n + m)),
-                None => Err(RuntimeError::TypeError {
-                    expected: Type::Int,
-                    found: arg.clone(),
-                }),
-            },
-            RuntimeVal::Fun => arg.clone().get_as_type().map(RuntimeVal::PartialFun),
-            RuntimeVal::PartialFun(t1) => match arg.clone().get_as_type() {
-                Ok(t2) => Ok(RuntimeVal::Type({
-                    Type::FunctionType(Box::new(t1), Box::new(t2))
-                })),
-                Err(e) => Err(e),
-            },
-            RuntimeVal::PrintInt => match arg.clone().get_as_int() {
-                Some(n) => {
-                    // println!("{}", n);
-                    Ok(RuntimeVal::Unit)
-                }
-                None => Err(RuntimeError::TypeError {
-                    expected: Type::Int,
-                    found: arg.clone(),
-                }),
-            },
-            _ => Err(RuntimeError::NotAFunction { value: self }),
-        }
-    }
-
-    fn get_as_type(self) -> Result<Type, RuntimeError> {
-        match self {
-            RuntimeVal::Type(t) => Ok(t),
-            c => Err(RuntimeError::TypeError {
-                expected: Type::Type,
-                found: c,
-            }),
-        }
-    }
-
-    // Given a runtime value, obtains the type of the given value. This is different
-    // from get_as_type which asserts that the given value is a type and returns that value
-    fn get_type(self, globals: &Vec<Expr>) -> Type {
-        match self {
-            RuntimeVal::Type(_) => Type::Type,
-            RuntimeVal::IntLit(_) => Type::Int,
-            RuntimeVal::Closure {
-                input_type: t,
-                captured_vars: bound_locals,
-                code: e,
-            } => {
-                let mut locals_types = bound_locals
-                    .iter()
-                    .map(|r| r.clone().get_type(globals))
-                    .collect();
-
-                Type::FunctionType(
-                    Box::new(t),
-                    Box::new(
-                        e.get_type_checked_with_locals(globals, &mut locals_types)
-                            .expect("Bad expression caused function to have ill-formed type"),
-                    ),
-                )
-            }
-            RuntimeVal::Unit => Type::Unit,
-            RuntimeVal::Bool(_) => Type::Bool,
-
-            RuntimeVal::Add => Type::FunctionType(
-                Box::new(Type::Int),
-                Box::new(Type::FunctionType(Box::new(Type::Int), Box::new(Type::Int))),
-            ),
-            RuntimeVal::PartialAdd(_) => {
-                Type::FunctionType(Box::new(Type::Int), Box::new(Type::Int))
-            }
-
-            RuntimeVal::Fun => Type::FunctionType(
-                Box::new(Type::Type),
-                Box::new(Type::FunctionType(
-                    Box::new(Type::Type),
-                    Box::new(Type::Type),
-                )),
-            ),
-            RuntimeVal::PartialFun(_) => {
-                Type::FunctionType(Box::new(Type::Type), Box::new(Type::Type))
-            }
-            RuntimeVal::PrintInt => Type::FunctionType(Box::new(Type::Int), Box::new(Type::Unit)),
-        }
-    }
-}
-
-fn interpret_with_locals(
-    globals: &Vec<Expr>,
-    locals: &mut Vec<RuntimeVal>,
-    to_eval: Expr,
-) -> Result<RuntimeVal, RuntimeError> {
-    //dbg!(&locals);
-    match to_eval {
-        Expr::Apply(func, arg) => {
-            // println!("APPLY FUNCTION:");
-            let f: RuntimeVal = interpret_with_locals(globals, locals, *func)?;
-            // println!("APPLY ARG:");
-            let x: RuntimeVal = interpret_with_locals(globals, locals, *arg)?;
-            let res = f.apply_as_fn(globals, locals, x);
-            // println!("END APPLY ({:?})", res);
-            res
-        }
-        Expr::Function {
-            variable_name: _,
-            input_type,
-            output,
-        } => {
-            // println!("FUNCTION");
-            let input_type = interpret_with_locals(globals, locals, *input_type)?;
-            let res = Ok(RuntimeVal::Closure {
-                input_type: input_type.get_as_type()?,
-                captured_vars: locals.clone(),
-                code: *output,
-            });
-            // println!("END FUNCTION");
-            res
-        }
-        // The check here fails because when we evaluate during type checking it doesnt
-        // have values of every single local variable
-        Expr::Local(i) => Ok(locals[locals.len() - 1 - i].clone()),
-        Expr::Global(i) => interpret_with_locals(globals, locals, globals[i].clone()),
-        Expr::Internal(i) => Ok(INTERNAL_VALUES[i].val.clone()),
-        Expr::IntLit(n) => Ok(RuntimeVal::IntLit(n)),
-        Expr::Unit => Ok(RuntimeVal::Unit),
-    }
-}
-
-pub fn interpret(globals: &Vec<Expr>, to_eval: Expr) -> Result<RuntimeVal, RuntimeError> {
-    let mut locals = Vec::new();
-    let res = interpret_with_locals(globals, &mut locals, to_eval);
-    assert!(locals.len() == 0);
-    res
 }
 
 // Unpacks the list of commands into the different types of commands.
@@ -466,15 +276,29 @@ pub fn unpack(
     (def_names, types, def_values, to_eval)
 }
 
+#[derive(Debug)]
+pub enum GenericError<'a> {
+    ResolutionError(ResolveError),
+    ParseError(ParseError<'a>),
+    RuntimeError(RuntimeError),
+}
+
 pub fn make_program<'a>(
     src: &'a str,
-) -> Result<(Vec<String>, Vec<Expr>, Vec<Expr>), ParseError<'a>> {
-    let ast: Vec<Command> = parsing::parse_src(src)?;
+) -> Result<(Vec<String>, Vec<Expr>, Vec<Expr>), GenericError<'a>> {
+    // parsing
+    let ast: Vec<Command> = parsing::parse_src(src).map_err(GenericError::ParseError)?;
     let (def_names, def_types, def_vals, to_eval) = unpack(ast);
-    let resolved_globals =
-        resolve_exprs(&def_names, def_vals).expect("Failed to resolve value names");
-    let resolved_evals = resolve_exprs(&def_names, to_eval).expect("failed lmao");
-    Ok((def_names, resolved_globals, resolved_evals))
+    // Name resolution
+    let globals = resolve_exprs(&def_names, def_vals).map_err(GenericError::ResolutionError)?;
+    let resolved_evals =
+        resolve_exprs(&def_names, to_eval).map_err(GenericError::ResolutionError)?;
+    let resolved_types =
+        resolve_exprs(&def_names, def_types).map_err(GenericError::ResolutionError)?;
+    // Type checking
+    let checked_types =
+        check_wellformed_types(&globals, resolved_types).map_err(GenericError::RuntimeError);
+    Ok((def_names, globals, resolved_evals))
 }
 
 pub fn main() {
