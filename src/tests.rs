@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     Expr, Type, interpret, make_program,
@@ -392,21 +392,21 @@ fn test_parse13() {
 fn test_interpret1() {
     // functions can get variables and stuff correctly
     let val: Expr = Expr::Apply(
-        Box::new(Expr::Apply(
-            Box::new(Expr::Function {
-                input_type: Box::new(Expr::Value(Box::new(Val::Type(Type::Type)))),
-                output: Box::new(Expr::Function {
-                    input_type: Box::new(Expr::Value(Box::new(Val::Type(Type::Type)))),
-                    output: Box::new(Expr::Local(1)),
+        Rc::new(Expr::Apply(
+            Rc::new(Expr::Function {
+                input_type: Rc::new(Expr::Value(Rc::new(Val::Type(Rc::new(Type::Type))))),
+                output: Rc::new(Expr::Function {
+                    input_type: Rc::new(Expr::Value(Rc::new(Val::Type(Rc::new(Type::Type))))),
+                    output: Rc::new(Expr::Local(1)),
                 }),
             }),
-            Box::new(Expr::Value(Box::new(Val::Type(Type::Int)))),
+            Rc::new(Expr::Value(Rc::new(Val::Type(Rc::new(Type::Int))))),
         )),
-        Box::new(Expr::Value(Box::new(Val::Type(Type::Unit)))),
+        Rc::new(Expr::Value(Rc::new(Val::Type(Rc::new(Type::Unit))))),
     );
 
-    match interpret(&Vec::new(), val) {
-        Ok(res) => assert_eq!(res, Val::Type(Type::Int)),
+    match interpret(Vec::new(), &val) {
+        Ok(res) => assert_eq!(*res, Val::Type(Rc::new(Type::Int))),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     };
 }
@@ -428,12 +428,12 @@ fn test_interpret2() {
 
     let val = evals[0].clone();
 
-    let expected = Val::Type(crate::Type::FunctionType(
-        Box::new(crate::Type::Int),
-        Box::new(crate::Type::Type),
-    ));
-    match interpret(&global, val) {
-        Ok(v) => assert_eq!(v, expected),
+    let expected = Val::Type(Rc::new(Type::FunctionType(
+        Rc::new(Type::Int),
+        Rc::new(Type::Type),
+    )));
+    match interpret(global, &val) {
+        Ok(v) => assert_eq!(*v, expected),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
 }
@@ -448,11 +448,11 @@ fn test_interpret3() {
     assert!(evals.len() == 1);
 
     let expected: Val = Val::Pair(
-        Box::new(Val::IntLit(6)),
-        Box::new(Val::Pair(Box::new(Val::Unit), Box::new(Val::IntLit(-1700)))),
+        Rc::new(Val::IntLit(6)),
+        Rc::new(Val::Pair(Rc::new(Val::Unit), Rc::new(Val::IntLit(-1700)))),
     );
-    match interpret(&global, evals[0].clone()) {
-        Ok(v) => assert_eq!(v, expected),
+    match interpret(global, &evals[0]) {
+        Ok(v) => assert_eq!(*v, expected),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
 }
@@ -469,14 +469,14 @@ fn test_interpret4() {
     assert!(global.len() == 1);
     assert!(evals.len() == 2);
 
-    let expected_0: Val = Val::IntLit(-10);
-    let expected_1: Val = Val::IntLit(31);
+    let expected_0: Rc<Val> = Rc::new(Val::IntLit(-10));
+    let expected_1: Rc<Val> = Rc::new(Val::IntLit(31));
     dbg!(&evals);
-    match interpret(&global, evals[0].clone()) {
+    match interpret(global.clone(), &evals[0]) {
         Ok(v) => assert_eq!(v, expected_0),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
-    match interpret(&global, evals[1].clone()) {
+    match interpret(global, &evals[1]) {
         Ok(v) => assert_eq!(v, expected_1),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }

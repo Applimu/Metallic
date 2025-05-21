@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
+use std::rc::Rc;
 use std::{collections::HashMap, env};
 
 use parsing::{Binding, Command, Matching, ParseError, UnresolvedExpr};
@@ -14,24 +15,24 @@ mod tests;
 // an expression where each name is known
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
-    Apply(Box<Expr>, Box<Expr>),
+    Apply(Rc<Expr>, Rc<Expr>),
     Function {
         // variable_name: String,
-        input_type: Box<Expr>,
-        output: Box<Expr>,
+        input_type: Rc<Expr>,
+        output: Rc<Expr>,
     },
     // reference to local variable (debrujin style)
     Local(usize),
     // reference to another defined value as index in the grid
     Global(usize),
     // literal value
-    Value(Box<runtime::Val>),
+    Value(Rc<Val>),
     IntLit(i64),
     // based on the local variable referenced to by the usize
     Match {
         enum_name: String,
         local: usize,
-        branches: Vec<Expr>,
+        branches: Vec<Rc<Expr>>,
     },
 }
 
@@ -41,13 +42,15 @@ pub enum Type {
     Int,
     Unit,
     Bool,
-    Pair(Box<Type>, Box<Type>),
-    FunctionType(Box<Type>, Box<Type>),
+    Pair(Rc<Type>, Rc<Type>),
+    FunctionType(Rc<Type>, Rc<Type>),
     DepProd {
-        input_type: Box<Type>,
-        function: Box<ArrFunc>,
+        input_type: Rc<Type>,
+        // this function should always return a Type
+        // and should have the same input type as the input_type
+        function: Rc<ArrFunc>,
     },
-    // TODO: Add usize here to show how many variants there are
+    // TODO: Add usize here to show how many variants there are in a given Enum type
     Enum(String),
 }
 
@@ -56,74 +59,71 @@ pub struct InternalValue {
     val: Val,
 }
 
-// all the names that are resolved internally
-pub const INTERNAL_VALUES: [InternalValue; 12] = [
-    InternalValue {
-        name: "Type",
-        val: Val::Type(Type::Type),
-    },
-    InternalValue {
-        name: "Int",
-        val: Val::Type(Type::Int),
-    },
-    InternalValue {
-        name: "add",
-        val: Val::Function(Function::Arrow(ArrFunc::Add)),
-    },
-    InternalValue {
-        name: "fun",
-        val: Val::Function(Function::Arrow(ArrFunc::Fun)),
-    },
-    InternalValue {
-        name: "Unit",
-        val: Val::Type(Type::Unit),
-    },
-    InternalValue {
-        name: "DepProd",
-        val: Val::Function(Function::DepProd(runtime::DependentProduct::DepProd)),
-    },
-    InternalValue {
-        name: "mk_pair",
-        val: Val::Function(Function::DepProd(runtime::DependentProduct::Pair)),
-    },
-    InternalValue {
-        name: "PairType",
-        val: Val::Function(Function::Arrow(ArrFunc::TypeOfMakePair)),
-    },
-    InternalValue {
-        name: "Bool",
-        val: Val::Type(Type::Bool),
-    },
-    InternalValue {
-        name: "true",
-        val: Val::Bool(true),
-    },
-    InternalValue {
-        name: "false",
-        val: Val::Bool(false),
-    },
-    InternalValue {
-        name: "eq",
-        val: Val::Function(Function::Arrow(ArrFunc::IntEq)),
-    },
-];
+pub fn make_internal_values() -> Vec<InternalValue> {
+    vec![
+        InternalValue {
+            name: "Type",
+            val: Val::Type(Rc::new(Type::Type)),
+        },
+        InternalValue {
+            name: "Int",
+            val: Val::Type(Rc::new(Type::Int)),
+        },
+        InternalValue {
+            name: "add",
+            val: Val::Function(Function::Arrow(ArrFunc::Add)),
+        },
+        InternalValue {
+            name: "fun",
+            val: Val::Function(Function::Arrow(ArrFunc::Fun)),
+        },
+        InternalValue {
+            name: "Unit",
+            val: Val::Type(Rc::new(Type::Unit)),
+        },
+        InternalValue {
+            name: "DepProd",
+            val: Val::Function(Function::DepProd(runtime::DependentProduct::DepProd)),
+        },
+        InternalValue {
+            name: "mk_pair",
+            val: Val::Function(Function::DepProd(runtime::DependentProduct::Pair)),
+        },
+        InternalValue {
+            name: "PairType",
+            val: Val::Function(Function::Arrow(ArrFunc::TypeOfMakePair)),
+        },
+        InternalValue {
+            name: "Bool",
+            val: Val::Type(Rc::new(Type::Bool)),
+        },
+        InternalValue {
+            name: "true",
+            val: Val::Bool(true),
+        },
+        InternalValue {
+            name: "false",
+            val: Val::Bool(false),
+        },
+        InternalValue {
+            name: "eq",
+            val: Val::Function(Function::Arrow(ArrFunc::IntEq)),
+        },
+    ]
+}
 
-fn get_internal_idx(name: &str) -> Option<usize> {
-    for (idx, internal) in INTERNAL_VALUES.iter().enumerate() {
+fn get_internal_val(name: &str) -> Option<Val> {
+    for internal in make_internal_values().iter() {
         if internal.name == name {
             // println!(
             //     "Index: {} for internal value {} = {}",
             //     idx, internal.name, name
             // );
-            return Some(idx);
+            return Some(internal.val.clone());
         }
     }
     // panic!("name: '{}', does not exist as an internal value", name)
     None
-}
-
-fn get_internal_val(name: &str) -> Option<Val> {
-    Some(INTERNAL_VALUES[get_internal_idx(name)?].val.clone())
 }
 
 //TODO: create a better error message
@@ -148,8 +148,8 @@ fn resolve_expr(
 ) -> Result<Expr, ResolveError> {
     match expr {
         UnresolvedExpr::Apply(func, arg) => {
-            let rfunc = Box::new(resolve_expr(global_names, local_names, case_groups, *func)?);
-            let rarg = Box::new(resolve_expr(global_names, local_names, case_groups, *arg)?);
+            let rfunc = Rc::new(resolve_expr(global_names, local_names, case_groups, *func)?);
+            let rarg = Rc::new(resolve_expr(global_names, local_names, case_groups, *arg)?);
             Ok(Expr::Apply(rfunc, rarg))
         }
         UnresolvedExpr::Function {
@@ -163,8 +163,8 @@ fn resolve_expr(
             assert_eq!(local_names.pop().unwrap(), name);
             Ok(Expr::Function {
                 // variable_name: name,
-                input_type: Box::new(input_type),
-                output: Box::new(output),
+                input_type: Rc::new(input_type),
+                output: Rc::new(output),
             })
         }
         // TODO: Add resolving to enum variants and enum types
@@ -179,12 +179,12 @@ fn resolve_expr(
                 }
             }
             match get_internal_val(&s) {
-                Some(v) => Ok(Expr::Value(Box::new(v))),
+                Some(v) => Ok(Expr::Value(Rc::new(v))),
                 None => Err(ResolveError::UnknownName(s)),
             }
         }
         UnresolvedExpr::IntLit(n) => Ok(Expr::IntLit(n)),
-        UnresolvedExpr::Unit => Ok(Expr::Value(Box::new(Val::Unit))),
+        UnresolvedExpr::Unit => Ok(Expr::Value(Rc::new(Val::Unit))),
         UnresolvedExpr::Match(Matching { matchend, branches }) => {
             let Some(local_idx) = get_from_locals(local_names, &matchend) else {
                 // right now I am only allowing for local variables in match statements.
@@ -212,7 +212,7 @@ fn resolve_expr(
                         branches.get(variant).unwrap().clone(),
                     )?;
 
-                    resolved_branches.push(resolved_branch);
+                    resolved_branches.push(Rc::new(resolved_branch));
                 }
                 // dbg!(&resolved_branches);
                 return Ok(Expr::Match {
@@ -246,11 +246,11 @@ fn resolve_exprs(
     global_names: &Vec<String>,
     case_groups: &HashMap<String, Vec<String>>,
     exprs: Vec<UnresolvedExpr>,
-) -> Result<Vec<Expr>, ResolveError> {
-    let mut resolved_program: Vec<Expr> = Vec::new();
+) -> Result<Vec<Rc<Expr>>, ResolveError> {
+    let mut resolved_program: Vec<Rc<Expr>> = Vec::new();
     for e in exprs {
         let resolved = resolve_expr(&global_names, &mut Vec::new(), case_groups, e.clone())?;
-        resolved_program.push(resolved);
+        resolved_program.push(Rc::new(resolved));
     }
     Ok(resolved_program)
 }
@@ -260,27 +260,27 @@ impl Expr {
     // the type of everything inside the expression has no type errors.
     fn get_type_checked_with_locals(
         &self,
-        globals: &Vec<Expr>,
+        globals: &Vec<Rc<Expr>>,
         locals: &mut Vec<Type>,
-    ) -> Result<Type, RuntimeError> {
+    ) -> Result<Rc<Type>, RuntimeError> {
         match self {
             Expr::Apply(func, args) => {
                 let func_type = func.clone().get_type_checked_with_locals(globals, locals)?;
                 let args_type = args.clone().get_type_checked_with_locals(globals, locals)?;
-                match func_type {
+                match func_type.as_ref() {
                     Type::FunctionType(input_type, output_type) => {
                         if args_type == *input_type {
-                            Ok(*output_type)
+                            Ok(output_type.clone())
                         } else {
                             Err(RuntimeError::TypesMismatch {
-                                expected: *input_type,
-                                found: args_type,
+                                expected: input_type.as_ref().clone(),
+                                found: args_type.as_ref().clone(),
                             })
                         }
                     }
                     _ => Err(RuntimeError::NotFunctionType {
-                        func: *func.clone(),
-                        args: *args.clone(),
+                        func: func.as_ref().clone(),
+                        args: args.as_ref().clone(),
                     }),
                 }
             }
@@ -289,19 +289,19 @@ impl Expr {
                 input_type,
                 output,
             } => {
-                let runtime_val = interpret(globals, *input_type.clone())?;
+                let runtime_val = interpret(globals.clone(), input_type)?;
                 let input_type = runtime_val.clone().get_as_type()?;
-                Ok(Type::FunctionType(
-                    Box::new(input_type),
-                    Box::new(output.get_type_checked_with_locals(globals, locals)?),
-                ))
+                Ok(Rc::new(Type::FunctionType(
+                    input_type,
+                    output.get_type_checked_with_locals(globals, locals)?,
+                )))
             }
-            Expr::Local(i) => Ok(locals[locals.len() - 1 - i].clone()),
+            Expr::Local(i) => Ok(Rc::new(locals[locals.len() - 1 - i].clone())),
             Expr::Global(i) => {
                 <Expr as Clone>::clone(&globals[*i]).get_type_checked_with_locals(globals, locals)
             }
-            Expr::IntLit(_) => Ok(Type::Int),
-            Expr::Value(val) => Ok(val.clone().get_type(globals)),
+            Expr::IntLit(_) => Ok(Rc::new(Type::Int)),
+            Expr::Value(val) => Ok(val.get_type(globals)),
             Expr::Match {
                 enum_name,
                 local,
@@ -316,8 +316,8 @@ impl Expr {
                         branches[i].get_type_checked_with_locals(globals, locals)?;
                     if other_branch_type != target_type {
                         return Err(RuntimeError::DifferentlyTypedBranches(
-                            e.clone(),
-                            branches[i].clone(),
+                            e.as_ref().clone(),
+                            branches[i].as_ref().clone(),
                         ));
                     }
                 }
@@ -327,19 +327,22 @@ impl Expr {
     }
 }
 
-pub fn is_wellformed_type(globals: &Vec<Expr>, maybe_type: Expr) -> Result<Type, RuntimeError> {
-    let yeah = interpret(globals, maybe_type)?;
+pub fn is_wellformed_type(
+    globals: &Vec<Rc<Expr>>,
+    maybe_type: &Expr,
+) -> Result<Rc<Type>, RuntimeError> {
+    let yeah = interpret(globals.clone(), maybe_type)?;
     yeah.get_as_type()
 }
 
 // checks the type of each type signature and makes sure that it is a type
-fn check_wellformed_types(
-    globals: &Vec<Expr>,
-    globals_types: Vec<Expr>,
-) -> Result<Vec<Type>, RuntimeError> {
+pub fn check_wellformed_types(
+    globals: &Vec<Rc<Expr>>,
+    globals_types: Vec<Rc<Expr>>,
+) -> Result<Vec<Rc<Type>>, RuntimeError> {
     let mut types = Vec::new();
     for type_expr in globals_types {
-        let type_sig = interpret(globals, type_expr)?;
+        let type_sig = interpret(globals.clone(), &type_expr)?;
         types.push(type_sig.get_as_type()?);
     }
 
@@ -400,10 +403,10 @@ pub enum GenericError<'a> {
     RuntimeError(RuntimeError),
 }
 
-// TODO: make a Progrma type
+// TODO: make a Program type
 pub fn make_program<'a>(
     src: &'a str,
-) -> Result<(Vec<String>, Vec<Expr>, Vec<Expr>), GenericError<'a>> {
+) -> Result<(Vec<String>, Vec<Rc<Expr>>, Vec<Rc<Expr>>), GenericError<'a>> {
     // parsing
     let ast: Vec<Command> = parsing::parse_src(src).map_err(GenericError::ParseError)?;
     let prog = separate_commands(ast);
@@ -439,7 +442,7 @@ pub fn main() {
     let (def_names, resolved_values, resolved_evals) =
         make_program(src.as_str()).expect("failed to compile program");
     for e in resolved_evals {
-        let result = interpret(&resolved_values, e.clone());
+        let result = interpret(resolved_values.clone(), &e);
         println!("evaluation result := {:?}", result);
     }
 }

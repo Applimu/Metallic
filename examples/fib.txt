@@ -13,12 +13,4 @@ def fun Int (fun Int (fun Int Int)) : fib_helper :=
 
 def fun Int Int : fib := fib_helper 0 1
 
-eval fib 0
-eval fib 1
-eval fib 2
-eval fib 3
-eval fib 4
-eval fib 5
-eval fib 6
-eval fib 7
-eval fib 8
+eval fib 50
