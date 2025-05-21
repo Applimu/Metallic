@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use crate::{
-    Expr, Type, get_internal_val, interpret, make_program,
+    Expr, Type, interpret, make_program,
     parsing::{
-        Binding, Command, Keyword, ParseError, Token, UnresolvedExpr, parse, tokenize,
+        Binding, Command, Keyword, Matching, ParseError, Token, UnresolvedExpr, parse, tokenize,
         tokenize_number,
     },
     runtime::Val,
@@ -86,7 +88,7 @@ fn test_tokenize3() {
 }
 
 #[test]
-pub fn test_parse1() {
+pub fn test_parse01() {
     let tokens = vec![
         Token::Keyword(Keyword::Def),
         Token::Identifier("u8".to_owned()),
@@ -106,7 +108,7 @@ pub fn test_parse1() {
 }
 
 #[test]
-pub fn test_parse2() {
+pub fn test_parse02() {
     let tokens = vec![
         Token::Identifier("add".to_owned()),
         Token::Number(5),
@@ -125,7 +127,7 @@ pub fn test_parse2() {
 }
 
 #[test]
-pub fn test_parse3() {
+pub fn test_parse03() {
     let tokens = vec![
         Token::ParenL,
         Token::Identifier("add".to_owned()),
@@ -146,7 +148,7 @@ pub fn test_parse3() {
 }
 
 #[test]
-pub fn test_parse4() {
+pub fn test_parse04() {
     // (add (5 7))
     let tokens = vec![
         Token::ParenL,
@@ -170,7 +172,7 @@ pub fn test_parse4() {
 }
 
 #[test]
-pub fn test_parse5() {
+pub fn test_parse05() {
     // ((add 5) 7 )
     let tokens = vec![
         Token::ParenL,
@@ -194,7 +196,7 @@ pub fn test_parse5() {
 }
 
 #[test]
-fn test_parse6() {
+fn test_parse06() {
     let tokens = vec![Token::ParenL, Token::ParenR];
     assert_eq!(
         parse(tokens.into_iter().map(Ok)).parse_expr(),
@@ -203,7 +205,7 @@ fn test_parse6() {
 }
 
 #[test]
-fn test_parse7() {
+fn test_parse07() {
     let tokens = vec![Token::Number(5), Token::ParenL, Token::ParenR];
     assert_eq!(
         parse(tokens.into_iter().map(Ok)).parse_expr(),
@@ -215,7 +217,7 @@ fn test_parse7() {
 }
 
 #[test]
-fn test_parse8() {
+fn test_parse08() {
     let tokens = vec![
         Token::Number(5),
         Token::ParenL,
@@ -233,7 +235,7 @@ fn test_parse8() {
 }
 
 #[test]
-fn test_parse9() {
+fn test_parse09() {
     let tokens = vec![
         // hi () 6
         Token::Identifier("hi".to_string()),
@@ -249,6 +251,139 @@ fn test_parse9() {
                 Box::new(UnresolvedExpr::Unit)
             )),
             Box::new(UnresolvedExpr::IntLit(6))
+        )),
+    );
+}
+
+#[test]
+fn test_parse10() {
+    // tests empty match statement
+    let tokens = vec![
+        Token::Keyword(Keyword::Match),
+        Token::Identifier("hi".to_string()),
+        Token::Keyword(Keyword::End),
+        Token::Number(6),
+    ];
+    assert_eq!(
+        parse(tokens.into_iter().map(Ok)).parse_expr(),
+        Ok(UnresolvedExpr::Apply(
+            Box::new(UnresolvedExpr::Match(Matching {
+                matchend: "hi".to_owned(),
+                branches: HashMap::new(),
+            })),
+            Box::new(UnresolvedExpr::IntLit(6))
+        )),
+    );
+}
+
+#[test]
+fn test_parse11() {
+    // test match with one case
+    let tokens = vec![
+        Token::Keyword(Keyword::Match),
+        Token::Identifier("hi".to_string()),
+        Token::Keyword(Keyword::Case),
+        Token::Identifier("case1".to_string()),
+        Token::Keyword(Keyword::Do),
+        Token::Identifier("add".to_string()),
+        Token::Number(0),
+        Token::Number(1),
+        Token::Keyword(Keyword::End),
+        Token::Number(6),
+    ];
+    let mut case_map = HashMap::new();
+    case_map.insert(
+        "case1".to_string(),
+        UnresolvedExpr::Apply(
+            Box::new(UnresolvedExpr::Apply(
+                Box::new(UnresolvedExpr::Variable("add".to_string())),
+                Box::new(UnresolvedExpr::IntLit(0)),
+            )),
+            Box::new(UnresolvedExpr::IntLit(1)),
+        ),
+    );
+    assert_eq!(
+        parse(tokens.into_iter().map(Ok)).parse_expr(),
+        Ok(UnresolvedExpr::Apply(
+            Box::new(UnresolvedExpr::Match(Matching {
+                matchend: "hi".to_owned(),
+                branches: case_map,
+            })),
+            Box::new(UnresolvedExpr::IntLit(6))
+        )),
+    );
+}
+
+#[test]
+fn test_parse12() {
+    // function that returns a match statement all applied to another expression
+    let tokens = vec![
+        Token::ParenL,
+        Token::Keyword(Keyword::Fn),
+        Token::Identifier("Bool".to_owned()),
+        Token::Keyword(Keyword::Colon),
+        Token::Identifier("input".to_owned()),
+        Token::Keyword(Keyword::Do),
+        Token::Keyword(Keyword::Match),
+        Token::Identifier("hi".to_string()),
+        Token::Keyword(Keyword::End),
+        Token::ParenR,
+        Token::ParenL,
+        Token::Identifier("x".to_owned()),
+        Token::Number(5),
+        Token::ParenR,
+    ];
+    let inner_match = Box::new(UnresolvedExpr::Match(Matching {
+        matchend: "hi".to_owned(),
+        branches: HashMap::new(),
+    }));
+    let func = UnresolvedExpr::Function {
+        name: "input".to_owned(),
+        input_type: Box::new(UnresolvedExpr::Variable("Bool".to_owned())),
+        output: inner_match,
+    };
+    assert_eq!(
+        parse(tokens.into_iter().map(Ok)).parse_expr(),
+        Ok(UnresolvedExpr::Apply(
+            Box::new(func),
+            Box::new(UnresolvedExpr::Apply(
+                Box::new(UnresolvedExpr::Variable("x".to_owned())),
+                Box::new(UnresolvedExpr::IntLit(5))
+            ))
+        )),
+    );
+}
+
+#[test]
+fn test_parse13() {
+    // same as 12 but with no matchs statement
+    let tokens = vec![
+        Token::ParenL,
+        Token::Keyword(Keyword::Fn),
+        Token::Identifier("Bool".to_owned()),
+        Token::Keyword(Keyword::Colon),
+        Token::Identifier("input".to_owned()),
+        Token::Keyword(Keyword::Do),
+        Token::Identifier("input".to_owned()),
+        Token::ParenR,
+        Token::ParenL,
+        Token::Identifier("x".to_owned()),
+        Token::Number(5),
+        Token::ParenR,
+    ];
+    let func = UnresolvedExpr::Function {
+        name: "input".to_owned(),
+        input_type: Box::new(UnresolvedExpr::Variable("Bool".to_owned())),
+        output: Box::new(UnresolvedExpr::Variable("input".to_owned())),
+    };
+    assert_eq!(
+        parse(tokens.into_iter().map(Ok)).parse_expr(),
+        Ok(UnresolvedExpr::Apply(
+            Box::new(func),
+            Box::new(UnresolvedExpr::Apply(
+                Box::new(UnresolvedExpr::Variable("x".to_owned())),
+                Box::new(UnresolvedExpr::IntLit(5))
+            ))
         )),
     );
 }
@@ -310,7 +445,7 @@ fn test_interpret3() {
             .expect("Failed to parse program");
     assert!(names.len() == 0);
     assert!(global.len() == 0);
-    assert!(&evals.len() == &1);
+    assert!(evals.len() == 1);
 
     let expected: Val = Val::Pair(
         Box::new(Val::IntLit(6)),
@@ -318,6 +453,31 @@ fn test_interpret3() {
     );
     match interpret(&global, evals[0].clone()) {
         Ok(v) => assert_eq!(v, expected),
+        Err(e) => panic!("Interpretting reached error: {:?}", e),
+    }
+}
+
+#[test]
+fn test_interpret4() {
+    let (names, global, evals) = make_program(
+        "def fun Bool Int : f := fn Bool : b do match b case true do -10 case false do 31 end
+            eval f true
+            eval f false",
+    )
+    .expect("Failed to parse program");
+    assert!(names.len() == 1);
+    assert!(global.len() == 1);
+    assert!(evals.len() == 2);
+
+    let expected_0: Val = Val::IntLit(-10);
+    let expected_1: Val = Val::IntLit(31);
+    dbg!(&evals);
+    match interpret(&global, evals[0].clone()) {
+        Ok(v) => assert_eq!(v, expected_0),
+        Err(e) => panic!("Interpretting reached error: {:?}", e),
+    }
+    match interpret(&global, evals[1].clone()) {
+        Ok(v) => assert_eq!(v, expected_1),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
 }

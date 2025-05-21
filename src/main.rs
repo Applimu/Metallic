@@ -1,8 +1,9 @@
-use std::env;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
+use std::{collections::HashMap, env};
 
-use parsing::{Binding, Command, ParseError, UnresolvedExpr};
+use parsing::{Binding, Command, Matching, ParseError, UnresolvedExpr};
 use runtime::{ArrFunc, Function, RuntimeError, Val, interpret};
 
 mod parsing;
@@ -26,7 +27,12 @@ pub enum Expr {
     // literal value
     Value(Box<runtime::Val>),
     IntLit(i64),
-    Unit,
+    // based on the local variable referenced to by the usize
+    Match {
+        enum_name: String,
+        local: usize,
+        branches: Vec<Expr>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,6 +47,8 @@ pub enum Type {
         input_type: Box<Type>,
         function: Box<ArrFunc>,
     },
+    // TODO: Add usize here to show how many variants there are
+    Enum(String),
 }
 
 pub struct InternalValue {
@@ -49,7 +57,7 @@ pub struct InternalValue {
 }
 
 // all the names that are resolved internally
-pub const INTERNAL_VALUES: [InternalValue; 8] = [
+pub const INTERNAL_VALUES: [InternalValue; 12] = [
     InternalValue {
         name: "Type",
         val: Val::Type(Type::Type),
@@ -82,6 +90,22 @@ pub const INTERNAL_VALUES: [InternalValue; 8] = [
         name: "PairType",
         val: Val::Function(Function::Arrow(ArrFunc::TypeOfMakePair)),
     },
+    InternalValue {
+        name: "Bool",
+        val: Val::Type(Type::Bool),
+    },
+    InternalValue {
+        name: "true",
+        val: Val::Bool(true),
+    },
+    InternalValue {
+        name: "false",
+        val: Val::Bool(false),
+    },
+    InternalValue {
+        name: "eq",
+        val: Val::Function(Function::Arrow(ArrFunc::IntEq)),
+    },
 ];
 
 fn get_internal_idx(name: &str) -> Option<usize> {
@@ -106,18 +130,26 @@ fn get_internal_val(name: &str) -> Option<Val> {
 #[derive(Debug)]
 pub enum ResolveError {
     UnknownName(String),
+    NotALocalVariable(String),
+    UnknownSetOfVariants(HashSet<String>),
+}
+
+pub struct EnumDefinition {
+    name: String,
+    variants: HashSet<String>,
 }
 
 // Resolves all names inside an expression and converts them into an indices of the provided array
 fn resolve_expr(
-    globals: &Vec<String>,
-    locals: &mut Vec<String>,
+    global_names: &Vec<String>,
+    local_names: &mut Vec<String>,
+    case_groups: &HashMap<String, Vec<String>>,
     expr: UnresolvedExpr,
 ) -> Result<Expr, ResolveError> {
     match expr {
         UnresolvedExpr::Apply(func, arg) => {
-            let rfunc = Box::new(resolve_expr(globals, locals, *func)?);
-            let rarg = Box::new(resolve_expr(globals, locals, *arg)?);
+            let rfunc = Box::new(resolve_expr(global_names, local_names, case_groups, *func)?);
+            let rarg = Box::new(resolve_expr(global_names, local_names, case_groups, *arg)?);
             Ok(Expr::Apply(rfunc, rarg))
         }
         UnresolvedExpr::Function {
@@ -125,25 +157,23 @@ fn resolve_expr(
             input_type,
             output,
         } => {
-            let input_type = resolve_expr(globals, locals, *input_type)?;
-            locals.push(name.clone());
-            let output = resolve_expr(globals, locals, *output)?;
-            assert_eq!(locals.pop().unwrap(), name);
+            let input_type = resolve_expr(global_names, local_names, case_groups, *input_type)?;
+            local_names.push(name.clone());
+            let output = resolve_expr(global_names, local_names, case_groups, *output)?;
+            assert_eq!(local_names.pop().unwrap(), name);
             Ok(Expr::Function {
                 // variable_name: name,
                 input_type: Box::new(input_type),
                 output: Box::new(output),
             })
         }
+        // TODO: Add resolving to enum variants and enum types
         UnresolvedExpr::Variable(s) => {
             // local variables shadow globals shadow internal
-            for (i, name) in locals.iter().rev().enumerate() {
-                // here `i` gives the debrujin indices
-                if **name == s {
-                    return Ok(Expr::Local(i));
-                }
+            if let Some(value) = get_from_locals(local_names, &s) {
+                return Ok(Expr::Local(value));
             }
-            for (i, name) in globals.iter().enumerate() {
+            for (i, name) in global_names.iter().enumerate() {
                 if *name == s {
                     return Ok(Expr::Global(i));
                 }
@@ -154,8 +184,59 @@ fn resolve_expr(
             }
         }
         UnresolvedExpr::IntLit(n) => Ok(Expr::IntLit(n)),
-        UnresolvedExpr::Unit => Ok(Expr::Unit),
+        UnresolvedExpr::Unit => Ok(Expr::Value(Box::new(Val::Unit))),
+        UnresolvedExpr::Match(Matching { matchend, branches }) => {
+            let Some(local_idx) = get_from_locals(local_names, &matchend) else {
+                // right now I am only allowing for local variables in match statements.
+                return Err(ResolveError::NotALocalVariable(matchend));
+            };
+
+            'outer: for (enum_name, enum_variants) in case_groups {
+                // verify if this enum's variants are equal to the branches
+                if enum_variants.len() != branches.len() {
+                    continue;
+                }
+                for case in branches.keys() {
+                    if !enum_variants.contains(case) {
+                        continue 'outer;
+                    }
+                }
+                // The branches have the same exact case names as the enum's variants,
+                // Now we resolve the internal branches
+                let mut resolved_branches = Vec::new();
+                for variant in enum_variants {
+                    let resolved_branch = resolve_expr(
+                        global_names,
+                        local_names,
+                        case_groups,
+                        branches.get(variant).unwrap().clone(),
+                    )?;
+
+                    resolved_branches.push(resolved_branch);
+                }
+                // dbg!(&resolved_branches);
+                return Ok(Expr::Match {
+                    enum_name: enum_name.clone(),
+                    local: local_idx,
+                    branches: resolved_branches,
+                });
+            }
+            let case_names = HashSet::from_iter(branches.into_keys());
+
+            Err(ResolveError::UnknownSetOfVariants(case_names))
+        }
     }
+}
+
+// Find the name in a list of local names
+fn get_from_locals(locals: &mut Vec<String>, s: &String) -> Option<usize> {
+    for (i, name) in locals.iter().rev().enumerate() {
+        // here `i` gives the debrujin indices
+        if **name == *s {
+            return Some(i);
+        }
+    }
+    None
 }
 
 // resolves references to local, global, and internally defined names. Multiple variables in the same
@@ -163,11 +244,12 @@ fn resolve_expr(
 // TODO: Allow for name overloading (make the types of variables matter)
 fn resolve_exprs(
     global_names: &Vec<String>,
+    case_groups: &HashMap<String, Vec<String>>,
     exprs: Vec<UnresolvedExpr>,
 ) -> Result<Vec<Expr>, ResolveError> {
     let mut resolved_program: Vec<Expr> = Vec::new();
     for e in exprs {
-        let resolved = resolve_expr(&global_names, &mut Vec::new(), e.clone())?;
+        let resolved = resolve_expr(&global_names, &mut Vec::new(), case_groups, e.clone())?;
         resolved_program.push(resolved);
     }
     Ok(resolved_program)
@@ -177,7 +259,7 @@ impl Expr {
     // gets the type of a value. While obtaining the value it also recursively checks that
     // the type of everything inside the expression has no type errors.
     fn get_type_checked_with_locals(
-        self,
+        &self,
         globals: &Vec<Expr>,
         locals: &mut Vec<Type>,
     ) -> Result<Type, RuntimeError> {
@@ -197,8 +279,8 @@ impl Expr {
                         }
                     }
                     _ => Err(RuntimeError::NotFunctionType {
-                        func: *func,
-                        args: *args,
+                        func: *func.clone(),
+                        args: *args.clone(),
                     }),
                 }
             }
@@ -207,7 +289,7 @@ impl Expr {
                 input_type,
                 output,
             } => {
-                let runtime_val = interpret(globals, *input_type)?;
+                let runtime_val = interpret(globals, *input_type.clone())?;
                 let input_type = runtime_val.clone().get_as_type()?;
                 Ok(Type::FunctionType(
                     Box::new(input_type),
@@ -216,11 +298,31 @@ impl Expr {
             }
             Expr::Local(i) => Ok(locals[locals.len() - 1 - i].clone()),
             Expr::Global(i) => {
-                <Expr as Clone>::clone(&globals[i]).get_type_checked_with_locals(globals, locals)
+                <Expr as Clone>::clone(&globals[*i]).get_type_checked_with_locals(globals, locals)
             }
             Expr::IntLit(_) => Ok(Type::Int),
-            Expr::Unit => Ok(Type::Unit),
-            Expr::Value(val) => Ok(val.get_type(globals)),
+            Expr::Value(val) => Ok(val.clone().get_type(globals)),
+            Expr::Match {
+                enum_name,
+                local,
+                branches,
+            } => {
+                let Some(e) = branches.get(0) else {
+                    panic!("Don't know how to type check with 0 branches")
+                };
+                let target_type = e.get_type_checked_with_locals(globals, locals)?;
+                for i in 1..branches.len() {
+                    let other_branch_type =
+                        branches[i].get_type_checked_with_locals(globals, locals)?;
+                    if other_branch_type != target_type {
+                        return Err(RuntimeError::DifferentlyTypedBranches(
+                            e.clone(),
+                            branches[i].clone(),
+                        ));
+                    }
+                }
+                Ok(target_type)
+            }
         }
     }
 }
@@ -244,21 +346,26 @@ fn check_wellformed_types(
     Ok(types)
 }
 
+pub struct UnresolvedProgram {
+    def_names: Vec<String>,
+    def_types: Vec<UnresolvedExpr>,
+    def_values: Vec<UnresolvedExpr>,
+    to_evaluate: Vec<UnresolvedExpr>,
+    enums: HashMap<String, Vec<String>>,
+}
+
 // Unpacks the list of commands into the different types of commands.
-// All three arrays are expected to have the same length, the first is the names of all bound
-// values, the second is the type signatures and the third is the values
-pub fn unpack(
-    commands: Vec<Command>,
-) -> (
-    Vec<String>,
-    Vec<UnresolvedExpr>,
-    Vec<UnresolvedExpr>,
-    Vec<UnresolvedExpr>,
-) {
+// first three arrays are always the same length
+pub fn separate_commands(commands: Vec<Command>) -> UnresolvedProgram {
     let mut def_names = Vec::new();
-    let mut types = Vec::new();
+    let mut def_types = Vec::new();
     let mut def_values = Vec::new();
     let mut to_eval = Vec::new();
+    let mut enums: HashMap<String, Vec<String>> = HashMap::new();
+    enums.insert(
+        "Bool".to_owned(),
+        vec!["false".to_owned(), "true".to_owned()],
+    );
     for command in commands {
         match command {
             Command::Definition(Binding {
@@ -267,13 +374,23 @@ pub fn unpack(
                 value,
             }) => {
                 def_names.push(var_name);
-                types.push(type_sig);
+                def_types.push(type_sig);
                 def_values.push(value);
             }
             Command::Eval(expr) => to_eval.push(expr),
+            Command::Enum(enum_name, variants) => match enums.insert(enum_name, variants) {
+                Some(v) => panic!("Multiple enums have the same name"),
+                None => (),
+            },
         }
     }
-    (def_names, types, def_values, to_eval)
+    UnresolvedProgram {
+        def_names,
+        def_types,
+        def_values,
+        to_evaluate: to_eval,
+        enums,
+    }
 }
 
 #[derive(Debug)]
@@ -283,22 +400,25 @@ pub enum GenericError<'a> {
     RuntimeError(RuntimeError),
 }
 
+// TODO: make a Progrma type
 pub fn make_program<'a>(
     src: &'a str,
 ) -> Result<(Vec<String>, Vec<Expr>, Vec<Expr>), GenericError<'a>> {
     // parsing
     let ast: Vec<Command> = parsing::parse_src(src).map_err(GenericError::ParseError)?;
-    let (def_names, def_types, def_vals, to_eval) = unpack(ast);
+    let prog = separate_commands(ast);
     // Name resolution
-    let globals = resolve_exprs(&def_names, def_vals).map_err(GenericError::ResolutionError)?;
-    let resolved_evals =
-        resolve_exprs(&def_names, to_eval).map_err(GenericError::ResolutionError)?;
-    let resolved_types =
-        resolve_exprs(&def_names, def_types).map_err(GenericError::ResolutionError)?;
+    let globals = resolve_exprs(&prog.def_names, &prog.enums, prog.def_values)
+        .map_err(GenericError::ResolutionError)?;
+    let resolved_evals = resolve_exprs(&prog.def_names, &prog.enums, prog.to_evaluate)
+        .map_err(GenericError::ResolutionError)?;
+    let resolved_types = resolve_exprs(&prog.def_names, &prog.enums, prog.def_types)
+        .map_err(GenericError::ResolutionError)?;
     // Type checking
     let checked_types =
         check_wellformed_types(&globals, resolved_types).map_err(GenericError::RuntimeError);
-    Ok((def_names, globals, resolved_evals))
+    dbg!(&globals);
+    Ok((prog.def_names, globals, resolved_evals))
 }
 
 pub fn main() {

@@ -1,6 +1,7 @@
 // hi
 
 use std::{
+    collections::HashMap,
     iter::Peekable,
     str::{Chars, SplitWhitespace},
 };
@@ -8,14 +9,14 @@ use std::{
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Keyword {
     Def,
-    // Enum,
+    Enum,
     Fn,
     Eval,
     // Let,
     // In,
-    // Match,
-    // Case,
-    // End,
+    Match,
+    Case,
+    End,
     Do,
     Eq,
     Colon,
@@ -49,6 +50,8 @@ pub enum ParseError<'a> {
     BadParenR,
     EmptyExpression,
     UnrecognizedToken(&'a str),
+    // honestly this one maybe shouldn't be a parse error and more a resolve name error idk
+    CaseNameCollision(String),
 }
 
 // turns a sequence of numeric characters into an integer
@@ -114,9 +117,33 @@ impl<'a> Iterator for Tokens<'a> {
                 self.next_to_read = "";
                 return Some(Ok(Token::Keyword(Keyword::Eval)));
             }
+            "enum" => {
+                self.next_to_read = "";
+                return Some(Ok(Token::Keyword(Keyword::Eval)));
+            }
             "fn" => {
                 self.next_to_read = "";
                 return Some(Ok(Token::Keyword(Keyword::Fn)));
+            }
+            // "let" => {
+            //     self.next_to_read = "";
+            //     return Some(Ok(Token::Keyword(Keyword::Let)));
+            // }
+            // "in" => {
+            //     self.next_to_read = "";
+            //     return Some(Ok(Token::Keyword(Keyword::In)));
+            // }
+            "match" => {
+                self.next_to_read = "";
+                return Some(Ok(Token::Keyword(Keyword::Match)));
+            }
+            "case" => {
+                self.next_to_read = "";
+                return Some(Ok(Token::Keyword(Keyword::Case)));
+            }
+            "end" => {
+                self.next_to_read = "";
+                return Some(Ok(Token::Keyword(Keyword::End)));
             }
             "do" => {
                 self.next_to_read = "";
@@ -183,6 +210,7 @@ pub enum UnresolvedExpr {
     Variable(String),
     IntLit(i64),
     Unit,
+    Match(Matching),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,10 +221,17 @@ pub struct Binding {
     pub(crate) value: UnresolvedExpr,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Matching {
+    pub(crate) matchend: String,
+    pub(crate) branches: HashMap<String, UnresolvedExpr>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     Definition(Binding),
     Eval(UnresolvedExpr),
+    Enum(String, Vec<String>),
 }
 
 pub struct Parser<'a, T>
@@ -213,10 +248,14 @@ where
     type Item = Result<Command, ParseError<'a>>;
 
     fn next(&mut self) -> Option<Result<Command, ParseError<'a>>> {
-        // assert that the first word was def
+        // the first word tells you what kind of command there is
         match self.tokens.next()? {
             Ok(Token::Keyword(Keyword::Def)) => Some(self.parse_binding().map(Command::Definition)),
             Ok(Token::Keyword(Keyword::Eval)) => Some(self.parse_expr().map(Command::Eval)),
+            Ok(Token::Keyword(Keyword::Enum)) => match self.parse_enum() {
+                Ok((name, variants)) => Some(Ok(Command::Enum(name, variants))),
+                Err(e) => Some(Err(e)),
+            },
             Ok(t) => Some(Err(ParseError::UnexpectedToken(t))),
             Err(e) => Some(Err(e)),
         }
@@ -258,8 +297,11 @@ where
             match self.peek_next_token()? {
                 None => break,
                 Some(Token::Keyword(Keyword::Def)) => break,
+                Some(Token::Keyword(Keyword::Enum)) => break,
                 Some(Token::Keyword(Keyword::Eval)) => break,
                 Some(Token::Keyword(Keyword::Eq)) => break,
+                Some(Token::Keyword(Keyword::Case)) => break,
+                Some(Token::Keyword(Keyword::End)) => break,
                 Some(Token::Keyword(Keyword::Colon)) => break,
                 Some(Token::Keyword(Keyword::Do)) => {
                     return Err(ParseError::UnexpectedToken(Token::Keyword(Keyword::Do)));
@@ -317,6 +359,7 @@ where
                                     input_type: Box::new(input_type),
                                     output: Box::new(output),
                                 });
+                                break;
                             }
                             bad_token => return Err(ParseError::UnexpectedToken(bad_token)),
                         }
@@ -359,6 +402,10 @@ where
                         },
                     )
                 }
+                Some(Token::Keyword(Keyword::Match)) => {
+                    let match_statement = UnresolvedExpr::Match(self.parse_match()?);
+                    push_as_arg(&mut paren_stack, match_statement)
+                }
             }
         }
 
@@ -400,6 +447,62 @@ where
             type_sig,
             value,
         });
+    }
+
+    fn parse_match(&mut self) -> Result<Matching, ParseError<'a>> {
+        // println!("PARSING MATCH STATEMENT!");
+        match self.get_next_token()? {
+            Token::Keyword(Keyword::Match) => (),
+            t => return Err(ParseError::UnexpectedToken(t)),
+        }
+
+        // println!("MATCH TOKEN ACCEPTED -- READING IDENTIFIER");
+        let matchend: String = match self.get_next_token()? {
+            Token::Identifier(s) => s,
+            t => return Err(ParseError::UnexpectedToken(t)),
+        };
+        // println!("MATCHEND: {} ACCEPTED -- READING CASES", matchend);
+
+        let mut branches: HashMap<String, UnresolvedExpr> = HashMap::new();
+        while !matches!(self.peek_next_token()?, Some(Token::Keyword(Keyword::End))) {
+            match self.get_next_token()? {
+                Token::Keyword(Keyword::Case) => (),
+                t => return Err(ParseError::UnexpectedToken(t)),
+            }
+
+            let case_name: String = match self.get_next_token()? {
+                Token::Identifier(s) => s,
+                t => return Err(ParseError::UnexpectedToken(t)),
+            };
+            if branches.contains_key(&case_name) {
+                return Err(ParseError::CaseNameCollision(case_name));
+            }
+
+            match self.get_next_token()? {
+                Token::Keyword(Keyword::Do) => (),
+                t => return Err(ParseError::UnexpectedToken(t)),
+            }
+
+            let expr = self.parse_expr()?;
+            branches.insert(case_name, expr);
+        }
+        // eat final `end` token
+        self.get_next_token()?;
+
+        Ok(Matching { matchend, branches })
+    }
+
+    fn parse_enum(&mut self) -> Result<(String, Vec<String>), ParseError<'a>> {
+        let name = match self.get_next_token()? {
+            Token::Identifier(s) => s,
+            t => return Err(ParseError::UnexpectedToken(t)),
+        };
+        let mut variants = Vec::new();
+        while let Some(Token::Identifier(v)) = self.peek_next_token()? {
+            variants.push(v.clone());
+            self.get_next_token().unwrap();
+        }
+        Ok((name, variants))
     }
 }
 

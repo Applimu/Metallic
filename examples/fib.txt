@@ -1,0 +1,24 @@
+
+def fun Int (fun Int (fun Int Int)) : fib_helper :=
+	fn Int: a do  
+	fn Int: b do
+	fn Int: i do
+	(fn Bool: i_is_zero do
+		match i_is_zero
+		case true do b
+		case false do fib_helper b (add a b) (add i -1)
+		end
+	) (eq i 0)
+
+
+def fun Int Int : fib := fib_helper 0 1
+
+eval fib 0
+eval fib 1
+eval fib 2
+eval fib 3
+eval fib 4
+eval fib 5
+eval fib 6
+eval fib 7
+eval fib 8

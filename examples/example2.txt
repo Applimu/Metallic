@@ -1,3 +1,10 @@
 
 
-eval mk_pair Int Int 3 4
+def fun Bool Int: f := fn Bool: b do
+	match b
+	case true do 17
+	case false do 19
+	end
+
+eval f true
+eval f false

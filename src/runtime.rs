@@ -9,6 +9,7 @@ pub enum Val {
     Pair(Box<Val>, Box<Val>),
     Function(Function),
     Type(Type),
+    Enum(String, usize),
 }
 
 // TODO: create better error messages
@@ -18,6 +19,8 @@ pub enum RuntimeError {
     TypesMismatch { expected: Type, found: Type },
     NotAFunction { value: Val },
     NotFunctionType { func: Expr, args: Expr },
+    DifferentlyTypedBranches(Expr, Expr),
+    NotAnEnum(Val),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,10 +35,12 @@ pub enum ArrFunc {
     Fun,
     PartialFun(Type),
     DepProdOf(Type),
-    PairOf(Type, Type),            // this has type: t1 -> t2 -> t1 & t2
-    PartialPairOf(Box<Val>, Type), // has type: t2 -> t1 & t2
+    PairOf(Type, Type),            // this is of type: t1 -> t2 -> t1 & t2
+    PartialPairOf(Box<Val>, Type), // of type: t2 -> t1 & t2
     TypeOfMakePair,                // this is the value: (Type: t1) -> (Type: t2) -> t1 & t2
     TypeOfPartialMakePair(Type),   // (Type: t2) -> t1 & t2
+    IntEq,
+    PartialIntEq(i64),
 }
 
 impl ArrFunc {
@@ -67,19 +72,11 @@ impl ArrFunc {
                 // dbg!(&result);
                 result
             }
-            ArrFunc::Add => match arg.clone().get_as_int() {
-                Some(n) => Ok(Val::Function(Function::Arrow(ArrFunc::PartialAdd(n)))),
-                None => Err(RuntimeError::TypeError {
-                    expected: Type::Int,
-                    found: arg.clone(),
-                }),
+            ArrFunc::Add => match arg.clone().get_as_int()? {
+                n => Ok(Val::Function(Function::Arrow(ArrFunc::PartialAdd(n)))),
             },
-            ArrFunc::PartialAdd(n) => match arg.clone().get_as_int() {
-                Some(m) => Ok(Val::IntLit(n + m)),
-                None => Err(RuntimeError::TypeError {
-                    expected: Type::Int,
-                    found: arg.clone(),
-                }),
+            ArrFunc::PartialAdd(n) => match arg.clone().get_as_int()? {
+                m => Ok(Val::IntLit(n + m)),
             },
             ArrFunc::Fun => arg
                 .get_as_type()
@@ -115,6 +112,14 @@ impl ArrFunc {
                     )),
                 )))
             }
+            ArrFunc::IntEq => {
+                let x = arg.get_as_int()?;
+                Ok(Val::Function(Function::Arrow(ArrFunc::PartialIntEq(x))))
+            }
+            ArrFunc::PartialIntEq(x) => {
+                let y = arg.get_as_int()?;
+                Ok(Val::Bool(x == y))
+            }
         }
     }
 
@@ -134,6 +139,8 @@ impl ArrFunc {
             ArrFunc::PartialPairOf(_, t2) => t2.clone(),
             ArrFunc::TypeOfMakePair => Type::Type,
             ArrFunc::TypeOfPartialMakePair(_) => Type::Type,
+            ArrFunc::IntEq => Type::Int,
+            ArrFunc::PartialIntEq(_) => Type::Int,
         }
     }
 
@@ -173,6 +180,8 @@ impl ArrFunc {
             ),
             ArrFunc::TypeOfMakePair => Type::Type,
             ArrFunc::TypeOfPartialMakePair(_) => Type::Type,
+            ArrFunc::IntEq => Type::FunctionType(Box::new(Type::Int), Box::new(Type::Bool)),
+            ArrFunc::PartialIntEq(_) => Type::Bool,
         }
     }
 }
@@ -321,10 +330,13 @@ impl Function {
 }
 
 impl Val {
-    fn get_as_int(self) -> Option<i64> {
+    fn get_as_int(self) -> Result<i64, RuntimeError> {
         match self {
-            Val::IntLit(n) => Some(n),
-            _ => None,
+            Val::IntLit(n) => Ok(n),
+            _ => Err(RuntimeError::TypeError {
+                expected: Type::Int,
+                found: self,
+            }),
         }
     }
 
@@ -367,6 +379,7 @@ impl Val {
                 input_type: Box::new(func.get_input_type()),
                 function: Box::new(func.get_output_type_fn()),
             },
+            Val::Enum(enum_name, _) => Type::Enum(enum_name),
         }
     }
 }
@@ -381,11 +394,11 @@ fn interpret_with_locals(
     match to_eval {
         Expr::Apply(func, arg) => {
             let f: Function = interpret_with_locals(globals, locals, *func)?.get_as_fn()?;
-            println!("APPLYING FUNCTION: {:?}", f);
+            // println!("APPLYING FUNCTION: {:?}", f);
             let x: Val = interpret_with_locals(globals, locals, *arg)?;
-            println!("TO ARG: {:?}", x);
+            // println!("TO ARG: {:?}", x);
             let res = f.apply_to(globals, locals, x);
-            println!("END APPLY ({:?})\n", res);
+            // println!("END APPLY ({:?})\n", res);
             res
         }
         Expr::Function { input_type, output } => {
@@ -404,13 +417,34 @@ fn interpret_with_locals(
         Expr::Local(i) => Ok(locals[locals.len() - 1 - i].clone()),
         Expr::Global(i) => interpret_with_locals(globals, locals, globals[i].clone()),
         Expr::IntLit(n) => Ok(Val::IntLit(n)),
-        Expr::Unit => Ok(Val::Unit),
         Expr::Value(val) => Ok(*val),
+        Expr::Match {
+            enum_name,
+            local: local_idx,
+            branches,
+        } => {
+            let local = locals[locals.len() - 1 - local_idx].clone();
+            match local {
+                Val::Enum(s, i) => {
+                    assert_eq!(s, enum_name);
+                    interpret_with_locals(globals, locals, branches[i].clone())
+                }
+                Val::Bool(b) => {
+                    assert_eq!(branches.len(), 2);
+                    if b == true {
+                        interpret_with_locals(globals, locals, branches[1].clone())
+                    } else {
+                        interpret_with_locals(globals, locals, branches[0].clone())
+                    }
+                }
+                val => Err(RuntimeError::NotAnEnum(val)),
+            }
+        }
     }
 }
 
 pub fn interpret(globals: &Vec<Expr>, to_eval: Expr) -> Result<Val, RuntimeError> {
-    dbg!(&to_eval);
+    // dbg!(&to_eval);
     let mut locals = Vec::new();
     let res = interpret_with_locals(globals, &mut locals, to_eval);
     assert!(locals.len() == 0);
