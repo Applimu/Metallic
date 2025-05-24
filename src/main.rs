@@ -17,7 +17,6 @@ mod tests;
 pub enum Expr {
     Apply(Rc<Expr>, Rc<Expr>),
     Function {
-        // variable_name: String,
         input_type: Rc<Expr>,
         output: Rc<Expr>,
     },
@@ -33,6 +32,11 @@ pub enum Expr {
         enum_name: String,
         local: usize,
         branches: Vec<Rc<Expr>>,
+    },
+    Let {
+        new_value_type: Rc<Expr>,
+        new_value: Rc<Expr>,
+        expr: Rc<Expr>,
     },
 }
 
@@ -225,6 +229,24 @@ fn resolve_expr(
 
             Err(ResolveError::UnknownSetOfVariants(case_names))
         }
+        UnresolvedExpr::Let(binding, expr) => {
+            let Binding {
+                var_name,
+                type_sig,
+                value,
+            } = *binding;
+            let new_value_type = resolve_expr(global_names, local_names, case_groups, type_sig)?;
+            let new_value = resolve_expr(global_names, local_names, case_groups, value)?;
+            local_names.push(var_name.clone());
+            let expr = resolve_expr(global_names, local_names, case_groups, *expr)?;
+            assert_eq!(local_names.pop().unwrap(), var_name);
+
+            Ok(Expr::Let {
+                new_value_type: Rc::new(new_value_type),
+                new_value: Rc::new(new_value),
+                expr: Rc::new(expr),
+            })
+        }
     }
 }
 
@@ -256,17 +278,29 @@ fn resolve_exprs(
 }
 
 impl Expr {
-    // gets the type of a value. While obtaining the value it also recursively checks that
+    // gets the type of this expression, given the global variables. While obtaining the value it also recursively checks that
     // the type of everything inside the expression has no type errors.
+    fn get_type_checked(&self, globals: &Vec<Rc<Expr>>) -> Result<Rc<Type>, RuntimeError> {
+        let mut locals = Vec::new();
+        let res = self.get_type_checked_with_locals(globals, &mut locals);
+        // If this is panicking its likely because you're returning an error
+        // before popping off the stack
+        assert_eq!(locals.len(), 0);
+        res
+    }
     fn get_type_checked_with_locals(
         &self,
         globals: &Vec<Rc<Expr>>,
-        locals: &mut Vec<Type>,
+        locals: &mut Vec<Rc<Type>>,
     ) -> Result<Rc<Type>, RuntimeError> {
         match self {
             Expr::Apply(func, args) => {
+                // println!("checking Expr::Apply(\n\t{:?},\n\t{:?}\n)", func, args);
                 let func_type = func.clone().get_type_checked_with_locals(globals, locals)?;
+                // println!("function has type: {:?}", &func_type);
                 let args_type = args.clone().get_type_checked_with_locals(globals, locals)?;
+                // println!("argument has type: {:?}", &args_type);
+
                 match func_type.as_ref() {
                     Type::FunctionType(input_type, output_type) => {
                         if args_type == *input_type {
@@ -289,17 +323,24 @@ impl Expr {
                 input_type,
                 output,
             } => {
-                let runtime_val = interpret(globals.clone(), input_type)?;
-                let input_type = runtime_val.clone().get_as_type()?;
+                let prev_locals_len = locals.len();
+                let val: Rc<Val> = interpret(globals.clone(), input_type)?;
+                let input_type = val.get_as_type()?;
+                locals.push(input_type.clone());
+                let checked_output_type = output.get_type_checked_with_locals(globals, locals);
+                assert_eq!(locals.pop(), Some(input_type.clone()));
+                assert_eq!(locals.len(), prev_locals_len);
                 Ok(Rc::new(Type::FunctionType(
                     input_type,
-                    output.get_type_checked_with_locals(globals, locals)?,
+                    checked_output_type?,
                 )))
             }
-            Expr::Local(i) => Ok(Rc::new(locals[locals.len() - 1 - i].clone())),
-            Expr::Global(i) => {
-                <Expr as Clone>::clone(&globals[*i]).get_type_checked_with_locals(globals, locals)
+            Expr::Local(i) => {
+                let calcked_idx = locals.len() - 1 - i;
+                dbg!(calcked_idx);
+                Ok(locals[calcked_idx].clone())
             }
+            Expr::Global(i) => <Expr as Clone>::clone(&globals[*i]).get_type_checked(globals),
             Expr::IntLit(_) => Ok(Rc::new(Type::Int)),
             Expr::Value(val) => Ok(val.get_type(globals)),
             Expr::Match {
@@ -308,7 +349,7 @@ impl Expr {
                 branches,
             } => {
                 let Some(e) = branches.get(0) else {
-                    panic!("Don't know how to type check with 0 branches")
+                    panic!("Don't know how to type check match expression with 0 branches")
                 };
                 let target_type = e.get_type_checked_with_locals(globals, locals)?;
                 for i in 1..branches.len() {
@@ -323,6 +364,48 @@ impl Expr {
                 }
                 Ok(target_type)
             }
+            Expr::Let {
+                new_value_type,
+                new_value,
+                expr,
+            } => {
+                let new_value_type_given =
+                    interpret(globals.clone(), new_value_type)?.get_as_type()?;
+
+                let new_value_type_found =
+                    new_value.get_type_checked_with_locals(globals, locals)?;
+                if new_value_type_given != new_value_type_found {
+                    return Err(RuntimeError::TypesMismatch {
+                        expected: new_value_type_given.as_ref().clone(),
+                        found: new_value_type_found.as_ref().clone(),
+                    });
+                };
+                locals.push(new_value_type_given.clone());
+                let res = expr.get_type_checked_with_locals(globals, locals);
+                assert_eq!(locals.pop().unwrap(), new_value_type_given);
+                res
+            }
+        }
+    }
+
+    // returns an expression with the same program but ideally optimized a bit or something idk
+    // does beta reduction
+    fn reduce(&mut self) -> Result<(), RuntimeError> {
+        match self {
+            Expr::Apply(internal, value) => match internal.as_ref().clone() {
+                Expr::Function { input_type, output } => {
+                    // replacing with Let here is okay wrt. evaluation order because if one were evaluating this
+                    // we would first evaluate the lambda which would just return the lambda expression
+                    *self = Expr::Let {
+                        new_value_type: input_type,
+                        new_value: value.clone(),
+                        expr: output,
+                    };
+                    Ok(())
+                }
+                _ => todo!(),
+            },
+            _ => todo!(),
         }
     }
 }
@@ -410,18 +493,46 @@ pub fn make_program<'a>(
     // parsing
     let ast: Vec<Command> = parsing::parse_src(src).map_err(GenericError::ParseError)?;
     let prog = separate_commands(ast);
+    println!("Program parsed and separated!");
     // Name resolution
     let globals = resolve_exprs(&prog.def_names, &prog.enums, prog.def_values)
         .map_err(GenericError::ResolutionError)?;
+    println!("Global values resolved");
     let resolved_evals = resolve_exprs(&prog.def_names, &prog.enums, prog.to_evaluate)
         .map_err(GenericError::ResolutionError)?;
+    println!("Values to evaluate resolved");
     let resolved_types = resolve_exprs(&prog.def_names, &prog.enums, prog.def_types)
         .map_err(GenericError::ResolutionError)?;
-    // Type checking
-    let checked_types =
-        check_wellformed_types(&globals, resolved_types).map_err(GenericError::RuntimeError);
+    println!("Global's types values resolved");
+    println!("No type-checking performed");
+    // // Type checking
+    // let checked_types =
+    //     check_wellformed_types(&globals, resolved_types).map_err(GenericError::RuntimeError)?;
+    // println!("Globals' types are well-formed");
+    // type_check(&globals, checked_types).map_err(GenericError::RuntimeError)?;
+    // println!("Program is type checked B)");
     dbg!(&globals);
     Ok((prog.def_names, globals, resolved_evals))
+}
+
+fn type_check(
+    globals: &Vec<Rc<Expr>>,
+    given_global_types: Vec<Rc<Type>>,
+) -> Result<(), RuntimeError> {
+    // this memo represents the types that we have already computed
+    // true if we have proven that the global *does* match the given global type, and
+    // false if we have not proven this yet
+    let mut memo: Vec<bool> = Vec::from_iter(std::iter::repeat(false).take(globals.len()));
+    for (value_expr, type_sig) in globals.iter().zip(given_global_types.iter()) {
+        let calculated_type = value_expr.get_type_checked(globals)?;
+        if calculated_type != *type_sig {
+            return Err(RuntimeError::TypesMismatch {
+                expected: type_sig.as_ref().clone(),
+                found: calculated_type.as_ref().clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub fn main() {

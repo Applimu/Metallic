@@ -12,8 +12,8 @@ pub enum Keyword {
     Enum,
     Fn,
     Eval,
-    // Let,
-    // In,
+    Let,
+    In,
     Match,
     Case,
     End,
@@ -37,7 +37,7 @@ pub enum Token {
 // TODO: allow for stuff like line numbers for error messages
 #[derive(Debug, Clone)]
 pub struct Tokens<'a> {
-    src: SplitWhitespace<'a>,
+    src: &'a str,
     next_to_read: &'a str,
 }
 
@@ -100,13 +100,10 @@ impl<'a> Iterator for Tokens<'a> {
     // in this function as we parse, we usually need to set self.next_to_read = ""
     // to show that we have eaten the input and actually parsed it
     fn next(&mut self) -> Option<Result<Token, ParseError<'a>>> {
-        // this doesnt account for things that are put *right* next to eachother
-
         while self.next_to_read.len() == 0 {
-            self.next_to_read = self.src.next()?
+            self.next_to_read = self.next_nowhitespace_substr()?;
         }
         // println!("Making next token!: Tokenizer state: {:?}", self);
-        // find next string which isnt empty
 
         match self.next_to_read {
             "def" => {
@@ -125,14 +122,14 @@ impl<'a> Iterator for Tokens<'a> {
                 self.next_to_read = "";
                 return Some(Ok(Token::Keyword(Keyword::Fn)));
             }
-            // "let" => {
-            //     self.next_to_read = "";
-            //     return Some(Ok(Token::Keyword(Keyword::Let)));
-            // }
-            // "in" => {
-            //     self.next_to_read = "";
-            //     return Some(Ok(Token::Keyword(Keyword::In)));
-            // }
+            "let" => {
+                self.next_to_read = "";
+                return Some(Ok(Token::Keyword(Keyword::Let)));
+            }
+            "in" => {
+                self.next_to_read = "";
+                return Some(Ok(Token::Keyword(Keyword::In)));
+            }
             "match" => {
                 self.next_to_read = "";
                 return Some(Ok(Token::Keyword(Keyword::Match)));
@@ -193,10 +190,51 @@ impl<'a> Iterator for Tokens<'a> {
     }
 }
 
+impl<'a> Tokens<'a> {
+    // returns the next chunk of code without any whitespace
+    // skips over comments and whitespace, and returns strings separately.
+    fn next_nowhitespace_substr(&mut self) -> Option<&'a str> {
+        if self.src.len() == 0 {
+            return None;
+        };
+        let mut iterator = self.src.char_indices();
+        // first find next non-whitespace, non-comment character
+        let begin_idx: usize = loop {
+            let (idx, chr) = iterator.next()?;
+            if !chr.is_whitespace() {
+                if self.src.get(idx..idx + 2) == Some("//") {
+                    while iterator.next()?.1 != '\n' {
+                        continue;
+                    }
+                    continue;
+                }
+                break idx;
+            }
+        };
+
+        let end_idx: usize = loop {
+            if let Some((idx, chr)) = iterator.next() {
+                if chr.is_whitespace() || self.src.get(idx..idx + 2) == Some("//") {
+                    break idx;
+                };
+            } else {
+                let new_chunk = &self.src[begin_idx..];
+                self.src = "";
+                return Some(new_chunk);
+            }
+        };
+
+        let new_chunk: &'a str = &self.src[begin_idx..end_idx];
+        self.src = &self.src[end_idx..];
+        Some(new_chunk)
+    }
+}
+
 pub fn tokenize<'a>(raw_src: &'a str) -> Tokens<'a> {
-    let mut src = raw_src.split_whitespace();
-    let next_to_read = src.next().unwrap();
-    Tokens { src, next_to_read }
+    Tokens {
+        src: raw_src,
+        next_to_read: "",
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +249,7 @@ pub enum UnresolvedExpr {
     IntLit(i64),
     Unit,
     Match(Matching),
+    Let(Box<Binding>, Box<UnresolvedExpr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -276,6 +315,23 @@ where
             None => Ok(None),
         }
     }
+    fn expect_identifier(&mut self) -> Result<String, ParseError<'a>> {
+        let next_token = self.get_next_token()?;
+        if let Token::Identifier(str) = next_token {
+            Ok(str)
+        } else {
+            Err(ParseError::UnexpectedToken(next_token))
+        }
+    }
+
+    fn expect_keyword(&mut self, kwd: Keyword) -> Result<(), ParseError<'a>> {
+        let next_token = self.get_next_token()?;
+        if next_token != Token::Keyword(kwd) {
+            Err(ParseError::UnexpectedToken(next_token))
+        } else {
+            Ok(())
+        }
+    }
 
     pub fn parse_expr(&mut self) -> Result<UnresolvedExpr, ParseError<'a>> {
         // helper function for thing
@@ -303,6 +359,7 @@ where
                 Some(Token::Keyword(Keyword::Case)) => break,
                 Some(Token::Keyword(Keyword::End)) => break,
                 Some(Token::Keyword(Keyword::Colon)) => break,
+                Some(Token::Keyword(Keyword::In)) => break,
                 Some(Token::Keyword(Keyword::Do)) => {
                     return Err(ParseError::UnexpectedToken(Token::Keyword(Keyword::Do)));
                 }
@@ -339,19 +396,10 @@ where
                             Token::Keyword(Keyword::Fn) => {
                                 // just parse the function here. not the best solution
                                 let input_type = self.parse_expr()?;
-                                match self.get_next_token()? {
-                                    Token::Keyword(Keyword::Colon) => (),
-                                    t => return Err(ParseError::UnexpectedToken(t)),
-                                };
-                                let name = match self.get_next_token()? {
-                                    Token::Identifier(s) => s,
-                                    t => return Err(ParseError::UnexpectedToken(t)),
-                                };
+                                self.expect_keyword(Keyword::Colon);
+                                let name = self.expect_identifier()?;
 
-                                match self.get_next_token()? {
-                                    Token::Keyword(Keyword::Do) => (),
-                                    t => return Err(ParseError::UnexpectedToken(t)),
-                                };
+                                self.expect_keyword(Keyword::Do);
 
                                 let output = self.parse_expr()?;
                                 paren_stack.push(UnresolvedExpr::Function {
@@ -377,19 +425,10 @@ where
                 Some(Token::Keyword(Keyword::Fn)) => {
                     self.tokens.next(); // eat token
                     let input_type = self.parse_expr()?;
-                    match self.get_next_token()? {
-                        Token::Keyword(Keyword::Colon) => (),
-                        t => return Err(ParseError::UnexpectedToken(t)),
-                    };
-                    let name = match self.get_next_token()? {
-                        Token::Identifier(s) => s,
-                        t => return Err(ParseError::UnexpectedToken(t)),
-                    };
+                    self.expect_keyword(Keyword::Colon);
+                    let name = self.expect_identifier()?;
 
-                    match self.get_next_token()? {
-                        Token::Keyword(Keyword::Do) => (),
-                        t => return Err(ParseError::UnexpectedToken(t)),
-                    };
+                    self.expect_keyword(Keyword::Do);
 
                     let output = self.parse_expr()?;
 
@@ -405,6 +444,17 @@ where
                 Some(Token::Keyword(Keyword::Match)) => {
                     let match_statement = UnresolvedExpr::Match(self.parse_match()?);
                     push_as_arg(&mut paren_stack, match_statement)
+                }
+                Some(Token::Keyword(Keyword::Let)) => {
+                    self.tokens.next(); // eat let token
+                    let binding = self.parse_binding()?;
+
+                    self.expect_keyword(Keyword::In);
+                    let expr = self.parse_expr()?;
+                    push_as_arg(
+                        &mut paren_stack,
+                        UnresolvedExpr::Let(Box::new(binding), Box::new(expr)),
+                    );
                 }
             }
         }
@@ -422,23 +472,12 @@ where
     fn parse_binding(&mut self) -> Result<Binding, ParseError<'a>> {
         let type_sig: UnresolvedExpr = self.parse_expr()?;
 
-        match self.tokens.next() {
-            Some(Ok(Token::Keyword(Keyword::Colon))) => (),
-            Some(Ok(t)) => return Err(ParseError::UnexpectedToken(t)),
-            Some(Err(e)) => return Err(e),
-            None => return Err(ParseError::UnexpectedEOF),
-        }
+        self.expect_keyword(Keyword::Colon);
 
         // assert that the next word was an identifier. This is where we would parse a pattern
         // expression if/when I add those
-        let name = match self.get_next_token()? {
-            Token::Identifier(s) => s,
-            t => return Err(ParseError::UnexpectedToken(t)),
-        };
-        match self.get_next_token()? {
-            Token::Keyword(Keyword::Eq) => (),
-            t => return Err(ParseError::UnexpectedToken(t)),
-        }
+        let name = self.expect_identifier()?;
+        self.expect_keyword(Keyword::Eq);
 
         let value: UnresolvedExpr = self.parse_expr()?;
 
@@ -451,37 +490,22 @@ where
 
     fn parse_match(&mut self) -> Result<Matching, ParseError<'a>> {
         // println!("PARSING MATCH STATEMENT!");
-        match self.get_next_token()? {
-            Token::Keyword(Keyword::Match) => (),
-            t => return Err(ParseError::UnexpectedToken(t)),
-        }
+        self.expect_keyword(Keyword::Match);
 
         // println!("MATCH TOKEN ACCEPTED -- READING IDENTIFIER");
-        let matchend: String = match self.get_next_token()? {
-            Token::Identifier(s) => s,
-            t => return Err(ParseError::UnexpectedToken(t)),
-        };
+        let matchend: String = self.expect_identifier()?;
         // println!("MATCHEND: {} ACCEPTED -- READING CASES", matchend);
 
         let mut branches: HashMap<String, UnresolvedExpr> = HashMap::new();
         while !matches!(self.peek_next_token()?, Some(Token::Keyword(Keyword::End))) {
-            match self.get_next_token()? {
-                Token::Keyword(Keyword::Case) => (),
-                t => return Err(ParseError::UnexpectedToken(t)),
-            }
+            self.expect_keyword(Keyword::Case);
 
-            let case_name: String = match self.get_next_token()? {
-                Token::Identifier(s) => s,
-                t => return Err(ParseError::UnexpectedToken(t)),
-            };
+            let case_name: String = self.expect_identifier()?;
             if branches.contains_key(&case_name) {
                 return Err(ParseError::CaseNameCollision(case_name));
             }
 
-            match self.get_next_token()? {
-                Token::Keyword(Keyword::Do) => (),
-                t => return Err(ParseError::UnexpectedToken(t)),
-            }
+            self.expect_keyword(Keyword::Do);
 
             let expr = self.parse_expr()?;
             branches.insert(case_name, expr);
@@ -498,9 +522,8 @@ where
             t => return Err(ParseError::UnexpectedToken(t)),
         };
         let mut variants = Vec::new();
-        while let Some(Token::Identifier(v)) = self.peek_next_token()? {
-            variants.push(v.clone());
-            self.get_next_token().unwrap();
+        while let Some(Token::Identifier(_)) = self.peek_next_token()? {
+            variants.push(self.expect_identifier()?);
         }
         Ok((name, variants))
     }

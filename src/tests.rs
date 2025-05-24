@@ -88,6 +88,40 @@ fn test_tokenize3() {
 }
 
 #[test]
+fn test_tokenize4() {
+    // tests parsing number + parenthesis
+    let mut tokens = tokenize(
+        "add 7 -2 // this is a comment
+        13",
+    );
+    assert_eq!(
+        tokens.next().unwrap(),
+        Ok(Token::Identifier("add".to_owned()))
+    );
+    assert_eq!(tokens.next().unwrap(), Ok(Token::Number(7)));
+    assert_eq!(tokens.next().unwrap(), Ok(Token::Number(-2)));
+    assert_eq!(tokens.next().unwrap(), Ok(Token::Number(13)));
+    assert_eq!(tokens.next(), None);
+}
+
+#[test]
+fn test_tokenize5() {
+    // tests parsing number + parenthesis
+    let mut tokens = tokenize(
+        "add 7 -2//this is a comment
+        13",
+    );
+    assert_eq!(
+        tokens.next().unwrap(),
+        Ok(Token::Identifier("add".to_owned()))
+    );
+    assert_eq!(tokens.next().unwrap(), Ok(Token::Number(7)));
+    assert_eq!(tokens.next().unwrap(), Ok(Token::Number(-2)));
+    assert_eq!(tokens.next().unwrap(), Ok(Token::Number(13)));
+    assert_eq!(tokens.next(), None);
+}
+
+#[test]
 pub fn test_parse01() {
     let tokens = vec![
         Token::Keyword(Keyword::Def),
@@ -389,6 +423,60 @@ fn test_parse13() {
 }
 
 #[test]
+fn test_parse14() {
+    let tokens = vec![
+        Token::Keyword(Keyword::Let),
+        Token::Identifier("Bool".to_owned()),
+        Token::Keyword(Keyword::Colon),
+        Token::Identifier("x".to_owned()),
+        Token::Keyword(Keyword::Eq),
+        Token::Identifier("true".to_owned()),
+        Token::Keyword(Keyword::In),
+        Token::Number(5),
+    ];
+    assert_eq!(
+        parse(tokens.into_iter().map(Ok)).parse_expr(),
+        Ok(UnresolvedExpr::Let(
+            Box::new(Binding {
+                var_name: "x".to_owned(),
+                type_sig: UnresolvedExpr::Variable("Bool".to_owned()),
+                value: UnresolvedExpr::Variable("true".to_owned())
+            }),
+            Box::new(UnresolvedExpr::IntLit(5))
+        ))
+    );
+}
+
+#[test]
+fn test_parse15() {
+    let tokens = vec![
+        Token::Number(7),
+        Token::Keyword(Keyword::Let),
+        Token::Identifier("Bool".to_owned()),
+        Token::Keyword(Keyword::Colon),
+        Token::Identifier("x".to_owned()),
+        Token::Keyword(Keyword::Eq),
+        Token::Identifier("true".to_owned()),
+        Token::Keyword(Keyword::In),
+        Token::Number(5),
+    ];
+    assert_eq!(
+        parse(tokens.into_iter().map(Ok)).parse_expr(),
+        Ok(UnresolvedExpr::Apply(
+            Box::new(UnresolvedExpr::IntLit(7)),
+            Box::new(UnresolvedExpr::Let(
+                Box::new(Binding {
+                    var_name: "x".to_owned(),
+                    type_sig: UnresolvedExpr::Variable("Bool".to_owned()),
+                    value: UnresolvedExpr::Variable("true".to_owned())
+                }),
+                Box::new(UnresolvedExpr::IntLit(5))
+            ))
+        ))
+    );
+}
+
+#[test]
 fn test_interpret1() {
     // functions can get variables and stuff correctly
     let val: Expr = Expr::Apply(
@@ -478,6 +566,26 @@ fn test_interpret4() {
     }
     match interpret(global, &evals[1]) {
         Ok(v) => assert_eq!(v, expected_1),
+        Err(e) => panic!("Interpretting reached error: {:?}", e),
+    }
+}
+
+#[test]
+fn test_interpret5() {
+    let (names, global, evals) = make_program(
+        "eval
+            let Int: a := 7 in
+            let Int : b := 19 in
+            add a b",
+    )
+    .expect("Failed to parse program");
+    assert!(names.len() == 0);
+    assert!(global.len() == 0);
+    assert!(evals.len() == 1);
+
+    let expected: Val = Val::IntLit(26);
+    match interpret(global, &evals[0]) {
+        Ok(v) => assert_eq!(*v, expected),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
 }

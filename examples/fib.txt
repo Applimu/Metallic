@@ -1,16 +1,22 @@
 
 def fun Int (fun Int (fun Int Int)) : fib_helper :=
-	fn Int: a do  
-	fn Int: b do
+	fn Int: a do     // hello
+	fn Int: b do     // hi
 	fn Int: i do
-	(fn Bool: i_is_zero do
-		match i_is_zero
+	let Bool: i_is_zero := eq i 0 in
+	match i_is_zero
 		case true do b
 		case false do fib_helper b (add a b) (add i -1)
-		end
-	) (eq i 0)
+	end
 
 
-def fun Int Int : fib := fib_helper 0 1
+def fun Int Int : fib := fib_helper 1 0
 
-eval fib 50
+def fun Int (fun Int (PairType Int Int)) : pair := mk_pair Int Int
+
+eval pair  0 (fib  0)
+eval pair 10 (fib 10)
+eval pair 20 (fib 20)
+eval pair 30 (fib 30)
+eval pair 40 (fib 40)
+eval pair 50 (fib 50)
