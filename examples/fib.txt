@@ -12,7 +12,7 @@ def fun Int (fun Int (fun Int Int)) : fib_helper :=
 
 def fun Int Int : fib := fib_helper 1 0
 
-def fun Int (fun Int (PairType Int Int)) : pair := mk_pair Int Int
+def fun Int (fun Int (PairType Int Int)) : pair := pair Int Int
 
 eval pair  0 (fib  0)
 eval pair 10 (fib 10)

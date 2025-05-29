@@ -5,10 +5,9 @@ use crate::{Expr, Type};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Val {
     IntLit(i64),
-    Bool(bool),
     Unit,
-    // Should Pair keep the types of the values?
-    Pair(Rc<Val>, Rc<Val>),
+    // Pair (t1, t2, x,y) has t1: x, t2: y
+    Pair(Rc<Type>, Rc<Type>, Rc<Val>, Rc<Val>),
     Function(Function),
     Type(Rc<Type>),
     Enum(String, usize),
@@ -18,31 +17,31 @@ pub enum Val {
 #[derive(Debug, Clone)]
 pub enum RuntimeError {
     TypeError { expected: Type, found: Val },
-    TypesMismatch { expected: Type, found: Type },
     NotAFunction { value: Val },
-    NotFunctionType { func: Expr, args: Expr },
-    DifferentlyTypedBranches(Expr, Expr),
     NotAnEnum(Val),
+    NotAPair(Val),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArrFunc {
     Add,
     PartialAdd(i64),
+    AddUncurried,
     Fun,
     PartialFun(Rc<Type>),
     DepProdOf(Rc<Type>),
     PairOf(Rc<Type>, Rc<Type>), // this is of type: t1 -> t2 -> t1 & t2
-    PartialPairOf(Rc<Val>, Rc<Type>), // of type: t2 -> t1 & t2
-    TypeOfMakePair,             // this is the value: (Type: t1) -> (Type: t2) -> t1 & t2
-    TypeOfPartialMakePair(Rc<Type>), // (Type: t2) -> t1 & t2
+    PartialPairOf(Rc<Type>, Rc<Type>, Rc<Val>), // of type: t2 -> t1 & t2
+    OutputTypeOfMkPair,         // this is the value: fn Type: t1 do (Type: t2) -> t1 & t2
+    TypeOfPartialMakePair(Rc<Type>), // fn Type: t2 do  t1 & t2
+    PairType,
+    PartialPairType(Rc<Type>),
     IntEq,
     PartialIntEq(i64),
 }
 
 impl ArrFunc {
-    // NOTE: PERFORMS NO TYPE CHECKING.
-    fn apply_to(&self, ctx: &mut Context, arg: Rc<Val>) -> Result<Rc<Val>, RuntimeError> {
+    fn apply_to(&self, arg: Rc<Val>) -> Result<Rc<Val>, RuntimeError> {
         match self {
             ArrFunc::Add => {
                 let n: i64 = arg.get_as_int()?;
@@ -53,6 +52,12 @@ impl ArrFunc {
             ArrFunc::PartialAdd(n) => {
                 let m = arg.get_as_int()?;
                 Ok(Rc::new(Val::IntLit(n + m)))
+            }
+            ArrFunc::AddUncurried => {
+                let (n, m) = arg.get_as_pair()?;
+                let n2 = n.get_as_int()?;
+                let m2 = m.get_as_int()?;
+                Ok(Rc::new(Val::IntLit(n2 + m2)))
             }
             ArrFunc::Fun => arg
                 .get_as_type()
@@ -68,26 +73,38 @@ impl ArrFunc {
                 input_type: t.clone(),
                 function: Rc::new(arg.get_as_arr_func()?.clone()),
             })))),
+            // NOTE: THIS DOES NOT CHECK THAT arg IS OF TYPE t1
             ArrFunc::PairOf(t1, t2) => Ok(Rc::new(Val::Function(Function::Arrow(
-                ArrFunc::PartialPairOf(arg, t2.clone()),
+                ArrFunc::PartialPairOf(t1.clone(), t2.clone(), arg),
             )))),
-            ArrFunc::PartialPairOf(left, t2) => Ok(Rc::new(Val::Pair(left.clone(), arg))),
-            ArrFunc::TypeOfMakePair => {
-                let t1 = arg.get_as_type()?;
-                Ok(Rc::new(Val::Function(Function::Arrow(
-                    ArrFunc::TypeOfPartialMakePair(t1.clone()),
-                ))))
-            }
+            ArrFunc::PartialPairOf(t1, t2, left) => Ok(Rc::new(Val::Pair(
+                t1.clone(),
+                t2.clone(),
+                left.clone(),
+                arg,
+            ))),
+            ArrFunc::OutputTypeOfMkPair => Ok(Rc::new(Val::Function(Function::Arrow(
+                ArrFunc::TypeOfPartialMakePair(arg.get_as_type()?),
+            )))),
             ArrFunc::TypeOfPartialMakePair(t1) => {
-                let t1_ptr = t1;
-                let t2_ptr = arg.get_as_type()?;
+                let t2 = arg.get_as_type()?;
                 Ok(Rc::new(Val::Type(Rc::new(Type::FunctionType(
-                    t1_ptr.clone(),
+                    t1.clone(),
                     Rc::new(Type::FunctionType(
-                        t2_ptr.clone(),
-                        Rc::new(Type::Pair(t1_ptr.clone(), t2_ptr.clone())),
+                        t2.clone(),
+                        Rc::new(Type::Pair(t1.clone(), t2.clone())),
                     )),
                 )))))
+            }
+            ArrFunc::PairType => {
+                let t1 = arg.get_as_type()?;
+                Ok(Rc::new(Val::Function(Function::Arrow(
+                    ArrFunc::PartialPairType(t1),
+                ))))
+            }
+            ArrFunc::PartialPairType(t1) => {
+                let t2 = arg.get_as_type()?;
+                Ok(Rc::new(Val::Type(Rc::new(Type::Pair(t1.clone(), t2)))))
             }
             ArrFunc::IntEq => {
                 let x = arg.get_as_int()?;
@@ -97,7 +114,10 @@ impl ArrFunc {
             }
             ArrFunc::PartialIntEq(x) => {
                 let y = arg.get_as_int()?;
-                Ok(Rc::new(Val::Bool(*x == y)))
+                Ok(Rc::new(Val::Enum(
+                    "Bool".to_owned(),
+                    if *x == y { 1 } else { 0 },
+                )))
             }
         }
     }
@@ -106,23 +126,27 @@ impl ArrFunc {
         match self {
             ArrFunc::Add => Type::Int,
             ArrFunc::PartialAdd(_) => Type::Int,
+            ArrFunc::AddUncurried => Type::Pair(Rc::new(Type::Int), Rc::new(Type::Int)),
             ArrFunc::Fun => Type::Type,
             ArrFunc::PartialFun(_) => Type::Type,
             ArrFunc::DepProdOf(t) => Type::FunctionType(t.clone(), Rc::new(Type::Type)),
             // these are bad solutions tbh
-            ArrFunc::PairOf(t1, _) => (**t1).clone(),
-            ArrFunc::PartialPairOf(_, t2) => (**t2).clone(),
-            ArrFunc::TypeOfMakePair => Type::Type,
+            ArrFunc::PairOf(t1, _) => t1.as_ref().clone(),
+            ArrFunc::PartialPairOf(_, t2, _) => t2.as_ref().clone(),
+            ArrFunc::OutputTypeOfMkPair => Type::Type,
             ArrFunc::TypeOfPartialMakePair(_) => Type::Type,
+            ArrFunc::PairType => Type::Type,
+            ArrFunc::PartialPairType(_) => Type::Type,
             ArrFunc::IntEq => Type::Int,
             ArrFunc::PartialIntEq(_) => Type::Int,
         }
     }
 
-    fn get_output_type(&self, globals: &Vec<Rc<Expr>>) -> Type {
+    fn get_output_type(&self) -> Type {
         match self {
-            ArrFunc::Add => Type::Int,
+            ArrFunc::Add => Type::FunctionType(Rc::new(Type::Int), Rc::new(Type::Int)),
             ArrFunc::PartialAdd(_) => Type::Int,
+            ArrFunc::AddUncurried => Type::Int,
             ArrFunc::Fun => Type::FunctionType(Rc::new(Type::Type), Rc::new(Type::Type)),
             ArrFunc::PartialFun(_) => Type::Type,
             ArrFunc::DepProdOf(t) => Type::FunctionType(
@@ -136,14 +160,17 @@ impl ArrFunc {
                     Rc::new(Type::Pair(t1.clone(), t2.clone())),
                 )),
             ),
-            ArrFunc::PartialPairOf(left, t2) => Type::FunctionType(
-                t2.clone(),
-                Rc::new(Type::Pair(left.get_type(globals), t2.clone())),
-            ),
-            ArrFunc::TypeOfMakePair => Type::Type,
+            ArrFunc::PartialPairOf(t1, t2, _) => {
+                Type::FunctionType(t2.clone(), Rc::new(Type::Pair(t1.clone(), t2.clone())))
+            }
+            ArrFunc::OutputTypeOfMkPair => Type::Type,
             ArrFunc::TypeOfPartialMakePair(_) => Type::Type,
-            ArrFunc::IntEq => Type::FunctionType(Rc::new(Type::Int), Rc::new(Type::Bool)),
-            ArrFunc::PartialIntEq(_) => Type::Bool,
+            ArrFunc::PairType => Type::FunctionType(Rc::new(Type::Type), Rc::new(Type::Type)),
+            ArrFunc::PartialPairType(_) => Type::Type,
+            ArrFunc::IntEq => {
+                Type::FunctionType(Rc::new(Type::Int), Rc::new(Type::Enum("Bool".to_owned())))
+            }
+            ArrFunc::PartialIntEq(_) => Type::Enum("Bool".to_owned()),
         }
     }
 }
@@ -189,12 +216,12 @@ impl DependentProduct {
                     Rc::new(Expr::Value(Rc::new(Val::Type(Rc::new(Type::Type))))),
                 )),
             },*/
-            DependentProduct::Pair => ArrFunc::TypeOfMakePair,
+            DependentProduct::Pair => ArrFunc::OutputTypeOfMkPair,
             DependentProduct::PartialPair(t1) => ArrFunc::TypeOfPartialMakePair(t1.clone()),
         }
     }
 
-    fn apply_to(&self, ctx: &mut Context, arg: Rc<Val>) -> Result<Rc<Val>, RuntimeError> {
+    fn apply_to(&self, arg: Rc<Val>) -> Result<Rc<Val>, RuntimeError> {
         match self {
             DependentProduct::DepProd => {
                 let input_type = arg.get_as_type()?;
@@ -236,14 +263,14 @@ impl Function {
             Function::Closure {
                 captured_vars,
                 code,
-            } => todo!("Don't know how to get input types of closures"),
+            } => todo!("Don't know how to get types of closures"),
         }
     }
 
     fn apply_to(&self, ctx: &mut Context, arg: Rc<Val>) -> Result<Rc<Val>, RuntimeError> {
         match self {
-            Function::Arrow(f) => f.apply_to(ctx, arg),
-            Function::DepProd(f) => f.apply_to(ctx, arg),
+            Function::Arrow(f) => f.apply_to(arg),
+            Function::DepProd(f) => f.apply_to(arg),
             Function::Closure {
                 captured_vars,
                 code: expr,
@@ -307,18 +334,24 @@ impl Val {
         }
     }
 
+    fn get_as_pair(&self) -> Result<(Rc<Val>, Rc<Val>), RuntimeError> {
+        match self {
+            Val::Pair(t1, t2, x, y) => Ok((x.clone(), y.clone())),
+            _ => Err(RuntimeError::NotAPair(self.clone())),
+        }
+    }
+
     // Given a runtime value, obtains the type of the given value. This is different
     // from get_as_type which asserts that the given value is a type and returns that value
-    pub fn get_type(&self, globals: &Vec<Rc<Expr>>) -> Rc<Type> {
+    pub fn get_type(&self) -> Rc<Type> {
         Rc::new(match self {
             Val::Type(_) => Type::Type,
             Val::IntLit(_) => Type::Int,
             Val::Unit => Type::Unit,
-            Val::Bool(_) => Type::Bool,
-            Val::Pair(left, right) => Type::Pair(left.get_type(globals), right.get_type(globals)),
+            Val::Pair(t1, t2, left, right) => Type::Pair(t1.clone(), t2.clone()),
             Val::Function(Function::Arrow(func)) => Type::FunctionType(
                 Rc::new(func.get_input_type()),
-                Rc::new(func.get_output_type(globals)),
+                Rc::new(func.get_output_type()),
             ),
             Val::Function(Function::DepProd(func)) => Type::DepProd {
                 input_type: Rc::new(func.get_input_type()),
@@ -332,7 +365,6 @@ impl Val {
 
 struct Context {
     // internals: Vec<InternalValue>,
-    // TODO: turn globals into an Rc<[]>
     globals: Vec<Rc<Expr>>,
     locals: Vec<Rc<Val>>,
 }
@@ -379,7 +411,11 @@ fn interpret_with_locals(ctx: &mut Context, to_eval: &Expr) -> Result<Rc<Val>, R
             interpret(ctx.globals.clone(), ctx.globals[i].as_ref())
         }
         &Expr::IntLit(n) => Ok(Rc::new(Val::IntLit(n))),
-        Expr::Value(val) => Ok(val.clone()),
+        Expr::Value(val) => Ok(Rc::new(val.val())),
+        Expr::EnumVariant(name, internal_num) => {
+            Ok(Rc::new(Val::Enum(name.clone(), *internal_num)))
+        }
+        Expr::EnumType(name) => Ok(Rc::new(Val::Type(Rc::new(Type::Enum(name.clone()))))),
         Expr::Match {
             enum_name,
             local: local_idx,
@@ -390,14 +426,6 @@ fn interpret_with_locals(ctx: &mut Context, to_eval: &Expr) -> Result<Rc<Val>, R
                 Val::Enum(s, i) => {
                     assert_eq!(s, enum_name);
                     interpret_with_locals(ctx, &branches[*i])
-                }
-                Val::Bool(b) => {
-                    assert_eq!(branches.len(), 2);
-                    if *b {
-                        interpret_with_locals(ctx, &branches[1])
-                    } else {
-                        interpret_with_locals(ctx, &branches[0])
-                    }
                 }
                 val => Err(RuntimeError::NotAnEnum(val.clone())),
             }

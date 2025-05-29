@@ -1,10 +1,6 @@
 // hi
 
-use std::{
-    collections::HashMap,
-    iter::Peekable,
-    str::{Chars, SplitWhitespace},
-};
+use std::{collections::HashMap, iter::Peekable, str::Chars};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Keyword {
@@ -64,7 +60,7 @@ pub fn tokenize_number<'a>(numbers: &'a str) -> (Result<Token, ParseError<'a>>, 
         Some(c) => *c,
         None => return (Err(ParseError::NotANumber(&numbers)), numbers),
     };
-    if (first == '-' || first == '+') {
+    if first == '-' || first == '+' {
         chars.next();
         if numbers.len() == 1 {
             // If this is only a '+' or '-', parse it as an operator
@@ -116,7 +112,7 @@ impl<'a> Iterator for Tokens<'a> {
             }
             "enum" => {
                 self.next_to_read = "";
-                return Some(Ok(Token::Keyword(Keyword::Eval)));
+                return Some(Ok(Token::Keyword(Keyword::Enum)));
             }
             "fn" => {
                 self.next_to_read = "";
@@ -396,10 +392,10 @@ where
                             Token::Keyword(Keyword::Fn) => {
                                 // just parse the function here. not the best solution
                                 let input_type = self.parse_expr()?;
-                                self.expect_keyword(Keyword::Colon);
+                                self.expect_keyword(Keyword::Colon)?;
                                 let name = self.expect_identifier()?;
 
-                                self.expect_keyword(Keyword::Do);
+                                self.expect_keyword(Keyword::Do)?;
 
                                 let output = self.parse_expr()?;
                                 paren_stack.push(UnresolvedExpr::Function {
@@ -425,10 +421,10 @@ where
                 Some(Token::Keyword(Keyword::Fn)) => {
                     self.tokens.next(); // eat token
                     let input_type = self.parse_expr()?;
-                    self.expect_keyword(Keyword::Colon);
+                    self.expect_keyword(Keyword::Colon)?;
                     let name = self.expect_identifier()?;
 
-                    self.expect_keyword(Keyword::Do);
+                    self.expect_keyword(Keyword::Do)?;
 
                     let output = self.parse_expr()?;
 
@@ -449,7 +445,7 @@ where
                     self.tokens.next(); // eat let token
                     let binding = self.parse_binding()?;
 
-                    self.expect_keyword(Keyword::In);
+                    self.expect_keyword(Keyword::In)?;
                     let expr = self.parse_expr()?;
                     push_as_arg(
                         &mut paren_stack,
@@ -472,12 +468,12 @@ where
     fn parse_binding(&mut self) -> Result<Binding, ParseError<'a>> {
         let type_sig: UnresolvedExpr = self.parse_expr()?;
 
-        self.expect_keyword(Keyword::Colon);
+        self.expect_keyword(Keyword::Colon)?;
 
         // assert that the next word was an identifier. This is where we would parse a pattern
         // expression if/when I add those
         let name = self.expect_identifier()?;
-        self.expect_keyword(Keyword::Eq);
+        self.expect_keyword(Keyword::Eq)?;
 
         let value: UnresolvedExpr = self.parse_expr()?;
 
@@ -489,23 +485,23 @@ where
     }
 
     fn parse_match(&mut self) -> Result<Matching, ParseError<'a>> {
-        // println!("PARSING MATCH STATEMENT!");
-        self.expect_keyword(Keyword::Match);
+        println!("PARSING MATCH STATEMENT!");
+        self.expect_keyword(Keyword::Match)?;
 
-        // println!("MATCH TOKEN ACCEPTED -- READING IDENTIFIER");
+        println!("MATCH TOKEN ACCEPTED -- READING IDENTIFIER");
         let matchend: String = self.expect_identifier()?;
-        // println!("MATCHEND: {} ACCEPTED -- READING CASES", matchend);
+        println!("MATCHEND: {} ACCEPTED -- READING CASES", matchend);
 
         let mut branches: HashMap<String, UnresolvedExpr> = HashMap::new();
         while !matches!(self.peek_next_token()?, Some(Token::Keyword(Keyword::End))) {
-            self.expect_keyword(Keyword::Case);
+            self.expect_keyword(Keyword::Case)?;
 
             let case_name: String = self.expect_identifier()?;
             if branches.contains_key(&case_name) {
                 return Err(ParseError::CaseNameCollision(case_name));
             }
 
-            self.expect_keyword(Keyword::Do);
+            self.expect_keyword(Keyword::Do)?;
 
             let expr = self.parse_expr()?;
             branches.insert(case_name, expr);
