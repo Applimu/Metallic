@@ -28,6 +28,7 @@ pub enum Atomic {
     EnumVariant(String, usize),
     EnumType(String),
     IntLit(i64),
+    StringLit(String),
 }
 
 // an expression where each variable name has been resolved
@@ -56,6 +57,7 @@ pub enum Expr {
 pub enum Type {
     Type,
     Int,
+    String,
     Unit,
     Pair(Rc<Type>, Rc<Type>),
     FunctionType(Rc<Type>, Rc<Type>),

@@ -78,8 +78,8 @@ impl Expr {
                     checked_output_type?,
                 )))
             }
+            Expr::Atom(Atomic::StringLit(_)) => Ok(Rc::new(Type::String)),
             Expr::Atom(Atomic::Local(i)) => Ok(locals[locals.len() - 1 - i].clone()),
-            // We just just that the user provided the right type here
             Expr::Atom(Atomic::Global(i)) => Ok(globals_types[*i].clone()),
             Expr::Atom(Atomic::IntLit(_)) => Ok(Rc::new(Type::Int)),
             Expr::Atom(Atomic::Value(val)) => Ok(Rc::new(val.get_type())),

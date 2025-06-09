@@ -73,6 +73,7 @@ fn resolve_expr(
                 None => Err(ResolveError::UnknownName(s)),
             }
         }
+        UnresolvedExpr::StringLit(s) => Ok(Expr::Atom(Atomic::StringLit(s))),
         UnresolvedExpr::IntLit(n) => Ok(Expr::Atom(Atomic::IntLit(n))),
         UnresolvedExpr::Unit => Ok(Expr::Atom(Atomic::Value(Internal::Iunit))),
         UnresolvedExpr::Match(Matching { matchend, branches }) => {

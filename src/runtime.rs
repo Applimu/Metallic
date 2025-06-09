@@ -5,6 +5,7 @@ use crate::{Atomic, Expr, Type};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Val {
     IntLit(i64),
+    StringLit(String),
     // the unit value, not to be confused with Type::Unit
     Unit,
     // Pair (t1, t2, x,y) has t1: x, t2: y
@@ -332,6 +333,7 @@ impl Val {
         Rc::new(match self {
             Val::Type(_) => Type::Type,
             Val::IntLit(_) => Type::Int,
+            Val::StringLit(_) => Type::String,
             Val::Unit => Type::Unit,
             Val::Pair(t1, t2, _, _) => Type::Pair(t1.clone(), t2.clone()),
             Val::Function(Function::Arrow(func)) => Type::FunctionType(
@@ -377,6 +379,7 @@ fn interpret_atom(ctx: &mut Context, atom: &Atomic) -> Result<Rc<Val>, RuntimeEr
             interpret(ctx.globals.clone(), ctx.globals[*i].as_ref())
         }
         Atomic::IntLit(n) => Ok(Rc::new(Val::IntLit(*n))),
+        Atomic::StringLit(s) => Ok(Rc::new(Val::StringLit(s.clone()))),
         Atomic::Value(val) => Ok(Rc::new(val.val())),
         Atomic::EnumVariant(name, internal_num) => {
             Ok(Rc::new(Val::Enum(name.clone(), *internal_num)))

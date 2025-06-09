@@ -211,6 +211,7 @@ pub enum UnresolvedExpr {
     },
     Variable(String),
     IntLit(i64),
+    StringLit(String),
     Unit,
     Match(Matching),
     Let(Box<Binding>, Box<UnresolvedExpr>),
