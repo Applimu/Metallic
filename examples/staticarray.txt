@@ -1,0 +1,12 @@
+
+
+def fun Int (fun Type Type): StaticArray := fn Int: n do  fn Type: A do
+	let Bool: n_eq_zero := eq n 0 in
+	match n_eq_zero
+		case true do Unit
+		case false do PairType A (StaticArray (add n -1) A)
+	end
+
+
+
+eval StaticArray 5 Int

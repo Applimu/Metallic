@@ -1,13 +1,18 @@
 use std::rc::Rc;
 
 use crate::{
-    Expr, Type,
+    Atomic, Expr, Type,
     runtime::{RuntimeError, Val, interpret},
 };
 
+// NOTE: I wrote this code before I realized that type checking with
+// a dependent language requires the ability for there to be free-variables.
+// Because of that, most of this code will likely need to be scrapped, but it's
+// still useful to keep around right now.
+
 impl Expr {
-    // gets the type of this expression, given the global variables. While obtaining the value it also recursively checks that
-    // the type of everything inside the expression has no type errors.
+    // gets the type of this expression, given the global variables. It also
+    // recursively checks that the type of everything inside the expression has no type errors.
     fn get_type_checked(
         &self,
         globals: &Vec<Rc<Expr>>,
@@ -16,7 +21,7 @@ impl Expr {
         let mut locals = Vec::new();
         let res = self.get_type_checked_with_locals(globals, globals_types, &mut locals);
         // If this assert is panicking its likely because you're returning an error
-        // before popping off the stack
+        // with a ? before popping a local variable off the stack
         assert_eq!(locals.len(), 0);
         res
     }
@@ -57,7 +62,6 @@ impl Expr {
                 }
             }
             Expr::Function {
-                // variable_name: _,
                 input_type: type_expr,
                 output,
             } => {
@@ -74,13 +78,13 @@ impl Expr {
                     checked_output_type?,
                 )))
             }
-            Expr::Local(i) => Ok(locals[locals.len() - 1 - i].clone()),
+            Expr::Atom(Atomic::Local(i)) => Ok(locals[locals.len() - 1 - i].clone()),
             // We just just that the user provided the right type here
-            Expr::Global(i) => Ok(globals_types[*i].clone()),
-            Expr::IntLit(_) => Ok(Rc::new(Type::Int)),
-            Expr::Value(val) => Ok(Rc::new(val.get_type())),
-            Expr::EnumVariant(ename, _) => Ok(Rc::new(Type::Enum(ename.clone()))),
-            Expr::EnumType(_) => Ok(Rc::new(Type::Type)),
+            Expr::Atom(Atomic::Global(i)) => Ok(globals_types[*i].clone()),
+            Expr::Atom(Atomic::IntLit(_)) => Ok(Rc::new(Type::Int)),
+            Expr::Atom(Atomic::Value(val)) => Ok(Rc::new(val.get_type())),
+            Expr::Atom(Atomic::EnumVariant(ename, _)) => Ok(Rc::new(Type::Enum(ename.clone()))),
+            Expr::Atom(Atomic::EnumType(_)) => Ok(Rc::new(Type::Type)),
             Expr::Match {
                 enum_name: _,
                 local: _,
@@ -123,27 +127,6 @@ impl Expr {
                 assert_eq!(locals.pop().unwrap(), new_value_type_given);
                 res
             }
-        }
-    }
-
-    // returns an expression with the same program but ideally optimized a bit or something idk
-    // does beta reduction
-    fn reduce(&mut self) -> Result<(), RuntimeError> {
-        match self {
-            Expr::Apply(internal, value) => match internal.as_ref().clone() {
-                Expr::Function { input_type, output } => {
-                    // replacing with Let here is okay wrt. evaluation order because if one were evaluating this
-                    // we would first evaluate the lambda which would just return the lambda expression
-                    *self = Expr::Let {
-                        new_value_type: input_type,
-                        new_value: value.clone(),
-                        expr: output,
-                    };
-                    Ok(())
-                }
-                _ => todo!(),
-            },
-            _ => todo!(),
         }
     }
 }
@@ -193,6 +176,7 @@ pub fn check_wellformed_types(
 ) -> Result<Vec<Rc<Type>>, RuntimeError> {
     let mut types = Vec::new();
     for type_expr in globals_types {
+        // wrt the note at the top, notice how this requires interpretting on non-typechecked code here.
         let type_sig = interpret(globals.clone(), &type_expr)?;
         types.push(type_sig.get_as_type()?);
     }

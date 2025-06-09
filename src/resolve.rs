@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    Expr, Internal,
+    Atomic, Expr, Internal,
     parsing::{Binding, Matching, UnresolvedExpr},
 };
 
@@ -48,35 +48,35 @@ fn resolve_expr(
         UnresolvedExpr::Variable(s) => {
             // local variables shadow globals shadow internal
             if let Some(value) = get_from_locals(local_names, &s) {
-                return Ok(Expr::Local(value));
+                return Ok(Expr::Atom(Atomic::Local(value)));
             }
             for (i, name) in global_names.iter().enumerate() {
                 if *name == s {
-                    return Ok(Expr::Global(i));
+                    return Ok(Expr::Atom(Atomic::Global(i)));
                 }
             }
 
             for (k, v) in case_groups.iter() {
-                println!("{:?}: {:?}", k, v);
+                // println!("{:?}: {:?}", k, v);
                 if *k == s {
-                    return Ok(Expr::EnumType(k.clone()));
+                    return Ok(Expr::Atom(Atomic::EnumType(k.clone())));
                 }
                 for (i, variant) in v.iter().enumerate() {
                     if *variant == s {
-                        return Ok(Expr::EnumVariant(k.clone(), i));
+                        return Ok(Expr::Atom(Atomic::EnumVariant(k.clone(), i)));
                     }
                 }
             }
 
-            match Internal::of_str(&s) {
-                Some(v) => Ok(Expr::Value(v)),
+            match Internal::try_as_internal(&s) {
+                Some(v) => Ok(Expr::Atom(Atomic::Value(v))),
                 None => Err(ResolveError::UnknownName(s)),
             }
         }
-        UnresolvedExpr::IntLit(n) => Ok(Expr::IntLit(n)),
-        UnresolvedExpr::Unit => Ok(Expr::Value(Internal::Iunit)),
+        UnresolvedExpr::IntLit(n) => Ok(Expr::Atom(Atomic::IntLit(n))),
+        UnresolvedExpr::Unit => Ok(Expr::Atom(Atomic::Value(Internal::Iunit))),
         UnresolvedExpr::Match(Matching { matchend, branches }) => {
-            dbg!(&local_names);
+            // dbg!(&local_names);
             let Some(local_idx) = get_from_locals(local_names, &matchend) else {
                 // right now I am only allowing for local variables in match statements.
                 return Err(ResolveError::NotALocalVariable(matchend));
@@ -92,7 +92,7 @@ fn resolve_expr(
                         continue 'outer;
                     }
                 }
-                // The branches have the same exact case names as the enum's variants,
+                // The branches have the same exact case names as this enum's variants,
                 // Now we resolve the internal branches
                 let mut resolved_branches = Vec::new();
                 for variant in enum_variants {
@@ -105,7 +105,7 @@ fn resolve_expr(
 
                     resolved_branches.push(Rc::new(resolved_branch));
                 }
-                // dbg!(&resolved_branches);
+
                 return Ok(Expr::Match {
                     enum_name: enum_name.clone(),
                     local: local_idx,
@@ -137,10 +137,11 @@ fn resolve_expr(
     }
 }
 
-// Find the name in a list of local names and return the debrujin index of the variable
-// if it exists.
+// Find the name in a list of local names and return the index of the variable
+// if it exists. Local variables are currently ordered in the order that they are
+// added to scope, which is the reverse of de brujin indices.
 fn get_from_locals(locals: &mut Vec<String>, s: &String) -> Option<usize> {
-    for (i, name) in locals.iter().rev().enumerate() {
+    for (i, name) in locals.iter().enumerate() {
         // here `i` gives the debrujin indices
         if **name == *s {
             return Some(i);
@@ -149,9 +150,9 @@ fn get_from_locals(locals: &mut Vec<String>, s: &String) -> Option<usize> {
     None
 }
 
-// resolves references to local, global, and internally defined names. Multiple variables in the same
-// thing gives undefined behavior currently.
-// TODO: Allow for name overloading (make the types of variables matter)
+// resolves references to local, global, and internally defined names. Multiple variables with
+// the same name give undefined behavior currently.
+// TODO: Think about adding name overloading.
 pub fn resolve_exprs(
     global_names: &Vec<String>,
     case_groups: &HashMap<String, Vec<String>>,

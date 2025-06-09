@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
-use crate::{Expr, Type};
+use crate::{Atomic, Expr, Type};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Val {
     IntLit(i64),
+    // the unit value, not to be confused with Type::Unit
     Unit,
     // Pair (t1, t2, x,y) has t1: x, t2: y
     Pair(Rc<Type>, Rc<Type>, Rc<Val>, Rc<Val>),
@@ -30,6 +31,7 @@ pub enum ArrFunc {
     Fun,
     PartialFun(Rc<Type>),
     DepProdOf(Rc<Type>),
+    TypeOfDepProd,
     PairOf(Rc<Type>, Rc<Type>), // this is of type: t1 -> t2 -> t1 & t2
     PartialPairOf(Rc<Type>, Rc<Type>, Rc<Val>), // of type: t2 -> t1 & t2
     OutputTypeOfMkPair,         // this is the value: fn Type: t1 do (Type: t2) -> t1 & t2
@@ -69,11 +71,15 @@ impl ArrFunc {
                 ))))),
                 Err(e) => Err(e),
             },
-            ArrFunc::DepProdOf(t) => Ok(Rc::new(Val::Type(Rc::new(Type::DepProd {
-                input_type: t.clone(),
-                function: Rc::new(arg.get_as_arr_func()?.clone()),
+            ArrFunc::TypeOfDepProd => Ok(Rc::new(Val::Type(Rc::new(Type::FunctionType(
+                Rc::new(Type::FunctionType(arg.get_as_type()?, Rc::new(Type::Type))),
+                Rc::new(Type::Type),
+            ))))),
+            // NOTE: THIS DOES NOT CHECK THAT arg IS OF TYPE   fun t Type
+            ArrFunc::DepProdOf(_t) => Ok(Rc::new(Val::Type(Rc::new(Type::DepProd {
+                family: Rc::new(arg.get_as_arr_func()?.clone()),
             })))),
-            // NOTE: THIS DOES NOT CHECK THAT arg IS OF TYPE t1
+            // NOTE: THIS DOES NOT CHECK THAT arg IS OF TYPE  t1
             ArrFunc::PairOf(t1, t2) => Ok(Rc::new(Val::Function(Function::Arrow(
                 ArrFunc::PartialPairOf(t1.clone(), t2.clone(), arg),
             )))),
@@ -130,7 +136,7 @@ impl ArrFunc {
             ArrFunc::Fun => Type::Type,
             ArrFunc::PartialFun(_) => Type::Type,
             ArrFunc::DepProdOf(t) => Type::FunctionType(t.clone(), Rc::new(Type::Type)),
-            // these are bad solutions tbh
+            ArrFunc::TypeOfDepProd => Type::Type,
             ArrFunc::PairOf(t1, _) => t1.as_ref().clone(),
             ArrFunc::PartialPairOf(_, t2, _) => t2.as_ref().clone(),
             ArrFunc::OutputTypeOfMkPair => Type::Type,
@@ -149,6 +155,7 @@ impl ArrFunc {
             ArrFunc::AddUncurried => Type::Int,
             ArrFunc::Fun => Type::FunctionType(Rc::new(Type::Type), Rc::new(Type::Type)),
             ArrFunc::PartialFun(_) => Type::Type,
+            ArrFunc::TypeOfDepProd => Type::Type,
             ArrFunc::DepProdOf(t) => Type::FunctionType(
                 Rc::new(Type::FunctionType(t.clone(), Rc::new(Type::Type))),
                 Rc::new(Type::Type),
@@ -193,29 +200,7 @@ impl DependentProduct {
 
     fn get_output_type_fn(&self) -> ArrFunc {
         match self {
-            // DepProd: (Type: T) => fun (fun T Type) Type
-            DependentProduct::DepProd => todo!("Implement type of DepProd internally"),
-            /* ArrFunc::Closure {
-                input_type: Rc::new(Type::Type),
-                captured_vars: vec![],
-                code: Rc::new(Expr::Apply(
-                    Rc::new(Expr::Apply(
-                        Rc::new(Expr::Value(Rc::new(Val::Function(Function::Arrow(
-                            ArrFunc::Fun,
-                        ))))),
-                        Rc::new(Expr::Apply(
-                            Rc::new(Expr::Apply(
-                                Rc::new(Expr::Value(Rc::new(Val::Function(Function::Arrow(
-                                    ArrFunc::Fun,
-                                ))))),
-                                Rc::new(Expr::Local(0)), // the input type
-                            )),
-                            Rc::new(Expr::Value(Rc::new(Val::Type(Rc::new(Type::Type))))),
-                        )),
-                    )),
-                    Rc::new(Expr::Value(Rc::new(Val::Type(Rc::new(Type::Type))))),
-                )),
-            },*/
+            DependentProduct::DepProd => ArrFunc::TypeOfDepProd,
             DependentProduct::Pair => ArrFunc::OutputTypeOfMkPair,
             DependentProduct::PartialPair(t1) => ArrFunc::TypeOfPartialMakePair(t1.clone()),
         }
@@ -275,10 +260,9 @@ impl Function {
                 captured_vars,
                 code: expr,
             } => {
-                // dbg!(bound_locals.len());
                 let mut new_locals: Vec<Rc<Val>> = captured_vars.clone();
-                // important that we push the new argument last as that is
-                // the 0th debrujin index
+                // important that we push the new argument on the end
+                // to align with Expr::Local(_)s
                 new_locals.push(arg);
                 let mut new_ctx = Context {
                     globals: ctx.globals.clone(),
@@ -315,6 +299,7 @@ impl Val {
         }
     }
 
+    // TODO: make it so that this doesn't call dependent products non-functions
     fn get_as_arr_func(&self) -> Result<&ArrFunc, RuntimeError> {
         match self {
             Val::Function(Function::Arrow(f)) => Ok(f),
@@ -336,86 +321,88 @@ impl Val {
 
     fn get_as_pair(&self) -> Result<(Rc<Val>, Rc<Val>), RuntimeError> {
         match self {
-            Val::Pair(t1, t2, x, y) => Ok((x.clone(), y.clone())),
+            Val::Pair(_, _, x, y) => Ok((x.clone(), y.clone())),
             _ => Err(RuntimeError::NotAPair(self.clone())),
         }
     }
 
     // Given a runtime value, obtains the type of the given value. This is different
-    // from get_as_type which asserts that the given value is a type and returns that value
+    // from get_as_type which asserts that the given value is a type and unwraps it
     pub fn get_type(&self) -> Rc<Type> {
         Rc::new(match self {
             Val::Type(_) => Type::Type,
             Val::IntLit(_) => Type::Int,
             Val::Unit => Type::Unit,
-            Val::Pair(t1, t2, left, right) => Type::Pair(t1.clone(), t2.clone()),
+            Val::Pair(t1, t2, _, _) => Type::Pair(t1.clone(), t2.clone()),
             Val::Function(Function::Arrow(func)) => Type::FunctionType(
                 Rc::new(func.get_input_type()),
                 Rc::new(func.get_output_type()),
             ),
             Val::Function(Function::DepProd(func)) => Type::DepProd {
-                input_type: Rc::new(func.get_input_type()),
-                function: Rc::new(func.get_output_type_fn()),
+                family: Rc::new(func.get_output_type_fn()),
             },
-            Val::Function(_) => todo!("getting types of closures not implemented :/"),
+            Val::Function(Function::Closure {
+                captured_vars: _,
+                code: _,
+            }) => todo!("getting types of closures not implemented :/"),
             Val::Enum(enum_name, _) => Type::Enum(enum_name.clone()),
         })
     }
 }
 
+#[derive(Debug, Clone)]
 struct Context {
-    // internals: Vec<InternalValue>,
     globals: Vec<Rc<Expr>>,
     locals: Vec<Rc<Val>>,
 }
 
 impl Context {
-    pub fn new(globals: Vec<Rc<Expr>>) -> Self {
+    pub const fn new(globals: Vec<Rc<Expr>>) -> Self {
         Self {
-            // internals: make_internal_values(),
             globals,
             locals: Vec::new(),
         }
     }
 
     pub fn get_local(&self, local_idx: &usize) -> &Rc<Val> {
-        &self.locals[self.locals.len() - 1 - local_idx]
+        &self.locals[*local_idx]
+    }
+}
+
+fn interpret_atom(ctx: &mut Context, atom: &Atomic) -> Result<Rc<Val>, RuntimeError> {
+    match atom {
+        Atomic::Local(i) => Ok(ctx.get_local(i).clone()),
+        Atomic::Global(i) => {
+            // keeping current context isn't necessary for this
+            interpret(ctx.globals.clone(), ctx.globals[*i].as_ref())
+        }
+        Atomic::IntLit(n) => Ok(Rc::new(Val::IntLit(*n))),
+        Atomic::Value(val) => Ok(Rc::new(val.val())),
+        Atomic::EnumVariant(name, internal_num) => {
+            Ok(Rc::new(Val::Enum(name.clone(), *internal_num)))
+        }
+        Atomic::EnumType(name) => Ok(Rc::new(Val::Type(Rc::new(Type::Enum(name.clone()))))),
     }
 }
 
 fn interpret_with_locals(ctx: &mut Context, to_eval: &Expr) -> Result<Rc<Val>, RuntimeError> {
+    // dbg!(&ctx);
+    // dbg!(to_eval);
     match to_eval {
         Expr::Apply(func, arg) => {
             let f: Rc<Val> = interpret_with_locals(ctx, func)?;
-            // println!("APPLYING FUNCTION: {:?}", f);
             let x: Rc<Val> = interpret_with_locals(ctx, arg)?;
-            // println!("TO ARG: {:?}", x);
             let res = f.get_as_fn()?.apply_to(ctx, x);
-            // println!("END APPLY ({:?})\n", res);
             res
         }
-        Expr::Function { input_type, output } => {
-            // println!("FUNCTION");
-            let res = Ok(Rc::new(Val::Function(Function::Closure {
-                captured_vars: ctx.locals.clone(),
-                code: output.clone(),
-            })));
-            // println!("END FUNCTION");
-            res
-        }
-        // The check here fails because when we evaluate during type checking it doesnt
-        // have values of every single local variable
-        Expr::Local(i) => Ok(ctx.get_local(i).clone()),
-        &Expr::Global(i) => {
-            // keeping current context isn't necessary for this
-            interpret(ctx.globals.clone(), ctx.globals[i].as_ref())
-        }
-        &Expr::IntLit(n) => Ok(Rc::new(Val::IntLit(n))),
-        Expr::Value(val) => Ok(Rc::new(val.val())),
-        Expr::EnumVariant(name, internal_num) => {
-            Ok(Rc::new(Val::Enum(name.clone(), *internal_num)))
-        }
-        Expr::EnumType(name) => Ok(Rc::new(Val::Type(Rc::new(Type::Enum(name.clone()))))),
+        Expr::Function {
+            input_type: _,
+            output,
+        } => Ok(Rc::new(Val::Function(Function::Closure {
+            captured_vars: ctx.locals.clone(),
+            code: output.clone(),
+        }))),
+        Expr::Atom(a) => interpret_atom(ctx, a),
         Expr::Match {
             enum_name,
             local: local_idx,
@@ -431,7 +418,7 @@ fn interpret_with_locals(ctx: &mut Context, to_eval: &Expr) -> Result<Rc<Val>, R
             }
         }
         Expr::Let {
-            new_value_type,
+            new_value_type: _,
             new_value,
             expr,
         } => {
@@ -445,7 +432,6 @@ fn interpret_with_locals(ctx: &mut Context, to_eval: &Expr) -> Result<Rc<Val>, R
 }
 
 pub fn interpret(globals: Vec<Rc<Expr>>, to_eval: &Expr) -> Result<Rc<Val>, RuntimeError> {
-    // dbg!(&to_eval);
     let mut ctx: Context = Context::new(globals);
     let res = interpret_with_locals(&mut ctx, to_eval);
     assert!(ctx.locals.len() == 0);

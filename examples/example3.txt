@@ -1,4 +1,6 @@
 
+// Defines a function compose which takes two functions Int -> Int and
+// returns the function that composes those two functions
 
 def fun (fun Int Int) (fun (fun Int Int) (fun Int Int)) : compose :=
 	fn (fun Int Int): f do
@@ -6,6 +8,9 @@ def fun (fun Int Int) (fun (fun Int Int) (fun Int Int)) : compose :=
 	fn Int: x do
 	f (g x)
 
+// this is evaluates to -389 no matter what input because
+// the first functions always returns -400 and then the next
+// two functions add 5 and 6 respectively
 
 eval compose (add 5) (
 		compose (add 6) (fn Int: _ do -400 )

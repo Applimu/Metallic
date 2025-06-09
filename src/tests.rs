@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    Expr, Internal, Type, interpret, make_program,
+    Atomic, Expr, Internal, Type, interpret, make_program,
     parsing::{
         Binding, Command, Keyword, Matching, ParseError, Token, UnresolvedExpr, parse, tokenize,
         tokenize_number,
@@ -479,18 +479,19 @@ fn test_parse15() {
 #[test]
 fn test_interpret1() {
     // functions can get variables and stuff correctly
+    // (fn Type: X do    fn Type: Y do X) Int Unit
     let val: Expr = Expr::Apply(
         Rc::new(Expr::Apply(
             Rc::new(Expr::Function {
-                input_type: Rc::new(Expr::Value(Internal::IType)),
+                input_type: Rc::new(Expr::Atom(Atomic::Value(Internal::IType))),
                 output: Rc::new(Expr::Function {
-                    input_type: Rc::new(Expr::Value(Internal::IType)),
-                    output: Rc::new(Expr::Local(1)),
+                    input_type: Rc::new(Expr::Atom(Atomic::Value(Internal::IType))),
+                    output: Rc::new(Expr::Atom(Atomic::Local(0))),
                 }),
             }),
-            Rc::new(Expr::Value(Internal::IInt)),
+            Rc::new(Expr::Atom(Atomic::Value(Internal::IInt))),
         )),
-        Rc::new(Expr::Value(Internal::IUnit)),
+        Rc::new(Expr::Atom(Atomic::Value(Internal::IUnit))),
     );
 
     match interpret(Vec::new(), &val) {

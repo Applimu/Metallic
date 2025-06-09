@@ -1,4 +1,5 @@
 
+// example of lambda functions, evaluation, and match statements.
 
 def fun Bool Int: f := fn Bool: b do
 	match b

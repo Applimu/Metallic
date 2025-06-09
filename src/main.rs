@@ -15,7 +15,22 @@ mod runtime;
 mod tests;
 mod type_checking;
 
-// an expression where each name is known
+// An atomic name in an expression
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Atomic {
+    // index reference to local variable
+    Local(usize),
+    // reference to a value in the globals array
+    Global(usize),
+    // literal value
+    Value(Internal),
+    // EnumVariant("Ex", 5) is the 5th variant of the Ex enum
+    EnumVariant(String, usize),
+    EnumType(String),
+    IntLit(i64),
+}
+
+// an expression where each variable name has been resolved
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Apply(Rc<Expr>, Rc<Expr>),
@@ -23,18 +38,10 @@ pub enum Expr {
         input_type: Rc<Expr>,
         output: Rc<Expr>,
     },
-    // reference to local variable (debrujin style)
-    Local(usize),
-    // reference to another defined value as index in the grid
-    Global(usize),
-    // literal value
-    Value(Internal),
-    EnumVariant(String, usize),
-    EnumType(String),
-    IntLit(i64),
-    // based on the local variable referenced to by the usize
+    Atom(Atomic),
     Match {
         enum_name: String,
+        // match statements can only take local variables right now
         local: usize,
         branches: Vec<Rc<Expr>>,
     },
@@ -53,10 +60,9 @@ pub enum Type {
     Pair(Rc<Type>, Rc<Type>),
     FunctionType(Rc<Type>, Rc<Type>),
     DepProd {
-        input_type: Rc<Type>,
         // this function should always return a Type
         // and should have the same input type as the input_type
-        function: Rc<ArrFunc>,
+        family: Rc<ArrFunc>,
     },
     Enum(String),
 }
@@ -68,7 +74,9 @@ impl Type {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+// These are constant values that are defined internally
+// It's basically made for pairing names with their `runtime::Val`s
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum Internal {
     IType,
     IInt,
@@ -103,8 +111,7 @@ impl Internal {
             Internal::IDepProd => todo!("Implement DepProd's type"),
             // should be (Type: T) -> (T -> Type) -> Type
             Internal::ImkPair => Type::DepProd {
-                input_type: Rc::new(Type::Type),
-                function: Rc::new(ArrFunc::OutputTypeOfMkPair),
+                family: Rc::new(ArrFunc::OutputTypeOfMkPair),
             },
             Internal::IPairType => Type::FunctionType(
                 Rc::new(Type::Type),
@@ -136,14 +143,14 @@ impl Internal {
             }
             Internal::ImkPair => Val::Function(Function::DepProd(runtime::DependentProduct::Pair)),
             Internal::IPairType => Val::Function(Function::Arrow(ArrFunc::PairType)),
-            Internal::IBool => Val::Type(Rc::new(Type::Enum("Bool".to_owned()))),
+            Internal::IBool => Val::Type(Rc::new(Type::Bool())),
             Internal::Itrue => Val::Enum("Bool".to_owned(), 1),
             Internal::Ifalse => Val::Enum("Bool".to_owned(), 0),
             Internal::Ieq => Val::Function(Function::Arrow(ArrFunc::IntEq)),
         }
     }
 
-    fn of_str(name: &str) -> Option<Internal> {
+    fn try_as_internal(name: &str) -> Option<Internal> {
         Some(match name {
             "Type" => Internal::IType,
             "Int" => Internal::IInt,
@@ -163,6 +170,8 @@ impl Internal {
 }
 
 pub struct UnresolvedProgram {
+    // the first three fields of this struct should always
+    // have the same length.
     def_names: Vec<String>,
     def_types: Vec<UnresolvedExpr>,
     def_values: Vec<UnresolvedExpr>,
@@ -241,7 +250,7 @@ pub fn make_program<'a>(
     // println!("Globals' types are well-formed");
     // type_check_globals(&globals, &checked_types).map_err(GenericError::CheckerError)?;
     // println!("Program is type checked B)");
-    dbg!(&globals);
+
     Ok((prog.def_names, globals, resolved_evals))
 }
 
@@ -260,8 +269,9 @@ pub fn main() {
         .read_to_string(&mut src)
         .expect("Something went wrong when reading the file :/");
 
-    let (def_names, resolved_values, resolved_evals) =
+    let (_def_names, resolved_values, resolved_evals) =
         make_program(src.as_str()).expect("failed to compile program");
+    println!("Interpretting program!");
     for e in resolved_evals {
         let result = interpret(resolved_values.clone(), &e);
         println!("evaluation result := {:?}", result);
