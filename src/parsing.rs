@@ -116,9 +116,18 @@ impl<'a> Iterator for Tokens<'a> {
         }
 
         if &self.next_to_read[0..1] == "\"" {
+            println!("FOUND STRING: {}", self.next_to_read);
             let last_idx = self.next_to_read.len() - 1;
             assert_eq!("\"", &self.next_to_read[last_idx..last_idx + 1]);
-            let new_str = self.next_to_read[1..last_idx].to_string();
+            if last_idx == 0 {
+                panic!("String has no closing parentheses");
+            }
+            let new_str = if last_idx == 1 {
+                String::new()
+            } else {
+                self.next_to_read[1..last_idx].to_string()
+            };
+            self.next_to_read = "";
             return Some(Ok(Token::Stringlit(new_str)));
         }
 
@@ -181,6 +190,7 @@ impl<'a> Tokens<'a> {
                 break idx;
             }
         };
+        println!("HI");
 
         // If the first valid non-whitespace character is a ", then this
         // is a string.
@@ -188,18 +198,20 @@ impl<'a> Tokens<'a> {
             loop {
                 // TODO: make this cause an error rather than just a None
                 let (idx, chr) = iterator.next()?;
+                println!("TESTING CHAR {}", chr);
                 if chr == '"' {
                     let new_chunk = &self.src[begin_idx..idx + 1];
                     self.src = &self.src[idx + 1..];
                     return Some(new_chunk);
                 }
+                println!("SKIPPED OVER CHAR {}", chr)
             }
         }
 
         // Otherwise we just keep going until we find whitespace or the beginning of a comment
         let end_idx: usize = loop {
             if let Some((idx, chr)) = iterator.next() {
-                if chr.is_whitespace() || self.src.get(idx..idx + 2) == Some("//") {
+                if chr.is_whitespace() || chr == '"' || self.src.get(idx..idx + 2) == Some("//") {
                     break idx;
                 };
             } else {

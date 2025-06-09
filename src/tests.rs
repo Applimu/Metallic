@@ -122,6 +122,44 @@ fn test_tokenize5() {
 }
 
 #[test]
+fn test_tokenize6() {
+    // tests generic string
+    let mut tokens = tokenize("\"hi\"");
+    assert_eq!(
+        tokens.next().unwrap(),
+        Ok(Token::Stringlit("hi".to_owned()))
+    );
+    assert_eq!(tokens.next(), None);
+}
+
+#[test]
+fn test_tokenize7() {
+    // tests empty string
+    let mut tokens = tokenize("   \"\"");
+    assert_eq!(tokens.next().unwrap(), Ok(Token::Stringlit("".to_owned())));
+    assert_eq!(tokens.next(), None);
+}
+
+#[test]
+fn test_tokenize8() {
+    // tests empty string
+    let mut tokens = tokenize("ab\"awa\"ba");
+    assert_eq!(
+        tokens.next().unwrap(),
+        Ok(Token::Identifier("ab".to_owned()))
+    );
+    assert_eq!(
+        tokens.next().unwrap(),
+        Ok(Token::Stringlit("awa".to_owned()))
+    );
+    assert_eq!(
+        tokens.next().unwrap(),
+        Ok(Token::Identifier("ba".to_owned()))
+    );
+    assert_eq!(tokens.next(), None);
+}
+
+#[test]
 pub fn test_parse01() {
     let tokens = vec![
         Token::Keyword(Keyword::Def),
