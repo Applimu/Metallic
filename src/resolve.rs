@@ -109,7 +109,7 @@ fn resolve_expr(
 
                 return Ok(Expr::Match {
                     enum_name: enum_name.clone(),
-                    local: local_idx,
+                    matchend: Rc::new(Expr::Atom(Atomic::Local(local_idx))),
                     branches: resolved_branches,
                 });
             }

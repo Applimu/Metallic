@@ -43,7 +43,7 @@ pub enum Expr {
     Match {
         enum_name: String,
         // match statements can only take local variables right now
-        local: usize,
+        matchend: Rc<Expr>,
         branches: Vec<Rc<Expr>>,
     },
     Let {

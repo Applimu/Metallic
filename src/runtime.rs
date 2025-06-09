@@ -408,11 +408,11 @@ fn interpret_with_locals(ctx: &mut Context, to_eval: &Expr) -> Result<Rc<Val>, R
         Expr::Atom(a) => interpret_atom(ctx, a),
         Expr::Match {
             enum_name,
-            local: local_idx,
+            matchend,
             branches,
         } => {
-            let local = ctx.get_local(local_idx);
-            match local.as_ref() {
+            let enum_val = interpret_with_locals(ctx, matchend)?;
+            match enum_val.as_ref() {
                 Val::Enum(s, i) => {
                     assert_eq!(s, enum_name);
                     interpret_with_locals(ctx, &branches[*i])

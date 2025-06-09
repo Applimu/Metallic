@@ -22,9 +22,10 @@ eval add (-17) four   // outputs -13 when interpreted
 
 
 ### Builtin Values:
-Metallic currently only has Integer values, Boolean values, and the Unit type, with the single value `()`. <br>
+Metallic currently only has Integer values, Boolean values, Strings, and the Unit type, with the single value `()`. <br>
 On integer values you can currently only add them, or compare if they are equal to eachother. <br>
-Booleans are an internally defined enum type with the variants `true` and `false`
+Booleans are an internally defined enum type with the variants `true` and `false` <br>
+
 
 ### Lambda functions and Let statements
 Lambdas are written using the notation `fn <Expr>: <name> do <Expr>`. They represent a computation with an unknown quantity. The type of a lambda that takes an `Int` as input and returns a `Bool` as output is written as `fun Int Bool`.
@@ -65,7 +66,6 @@ TODO: explain pairs (tuples)
 # Important features NOT yet implemented
 - Operators (e.g. `+`, `*`, `->`, etc.). Applying functions is currently the only way to do computation.
 - Integer comparison operations
-- Strings
 - Type Checking. Currently the expressions in the type field are just straight up ignored. It's been a struggle to learn how to do this with dependent types but I now understand to be able to do it once I get to it.
 - The `Empty` type, which will be a type that expresses the idea of not returning any value (through either exiting the program or looping forever).
   - I also am currently toying with the idea of a function `((T -> Empty) -> Empty) -> T: dne`, which stands for Double negation elimination. This function would make the logic of metallic's type system a classical logic rather than an intuitionistic one. It would have an immensely inefficient implementation but I believe it's possible, lmk if you want to know more about it.

@@ -87,7 +87,7 @@ impl Expr {
             Expr::Atom(Atomic::EnumType(_)) => Ok(Rc::new(Type::Type)),
             Expr::Match {
                 enum_name: _,
-                local: _,
+                matchend: _,
                 branches,
             } => {
                 let Some(e) = branches.get(0) else {

@@ -198,13 +198,11 @@ impl<'a> Tokens<'a> {
             loop {
                 // TODO: make this cause an error rather than just a None
                 let (idx, chr) = iterator.next()?;
-                println!("TESTING CHAR {}", chr);
                 if chr == '"' {
                     let new_chunk = &self.src[begin_idx..idx + 1];
                     self.src = &self.src[idx + 1..];
                     return Some(new_chunk);
                 }
-                println!("SKIPPED OVER CHAR {}", chr)
             }
         }
 
