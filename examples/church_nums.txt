@@ -1,6 +1,6 @@
 
 
-def Type: Numeral := DepProd (fn Type: A do fun (fun A A) (fun A A))
+def Type: Numeral := DepProd Type (fn Type: A do fun (fun A A) (fun A A))
 
 def Numeral: Zero := fn Type: A do
 	fn fun A A: f do
@@ -14,14 +14,14 @@ def Numeral: Two := fn Type: A do
 	fn fun A A: f do
 	fn A: a do f (f a)
 
-def fun Numeral (DepProd fn Type: A do fun (fun A  A) (fun A  Numeral)): Succ :=
+def fun Numeral (DepProd Type fn Type: A do fun (fun A  A) (fun A  Numeral)): Succ :=
 	fn Numeral: n do
 	fn Type: A do
 	fn fun A A: f do
 	fn A: x do
 	n A f (f x)
 
-def fun Numeral (fun Numeral (DepProd fn Type: A do fun (fun A A) (fun A Numeral))): Add :=
+def fun Numeral (fun Numeral (DepProd Type fn Type: A do fun (fun A A) (fun A Numeral))): Add :=
 	fn Numeral: n do
 	fn Numeral: m do
 	fn Type: A do
@@ -29,7 +29,7 @@ def fun Numeral (fun Numeral (DepProd fn Type: A do fun (fun A A) (fun A Numeral
 	fn A: x do
 	n A f (m A f x)
 
-def fun Numeral (fun Numeral (DepProd fn Type: A do fun (fun A A) (fun A Numeral))): Mul :=
+def fun Numeral (fun Numeral (DepProd Type fn Type: A do fun (fun A A) (fun A Numeral))): Mul :=
 	fn Numeral: n do
 	fn Numeral: m do
 	fn Type: A do
@@ -37,11 +37,11 @@ def fun Numeral (fun Numeral (DepProd fn Type: A do fun (fun A A) (fun A Numeral
 	fn A: x do
 	n A (m A f) x
 
-def fun Numeral (fun Numeral (DepProd fn Type: A do fun (fun A A) (fun A Numeral))): Pow :=
+def fun Numeral (fun Numeral (DepProd Type fn Type: A do fun (fun A A) (fun A Numeral))): Pow :=
 	fn Numeral: n do
 	fn Numeral: m do
 	fn Type: A do
-	n (fun A A) (m A)
+	m (fun A A) (n A)
 
 def fun Numeral Int: to_int := fn Numeral: n do
 	n Int (add 1) 0
@@ -50,4 +50,4 @@ def Numeral: Four := Mul Two Two
 
 def Numeral: Sixteen := Mul Four Four
 
-eval to_int (Pow Sixteen Four)
+eval to_int (Pow Sixteen (Add Two One))
