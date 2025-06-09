@@ -340,7 +340,7 @@ fn test_parse10() {
         parse(tokens.into_iter().map(Ok)).parse_expr(),
         Ok(UnresolvedExpr::Apply(
             Box::new(UnresolvedExpr::Match(Matching {
-                matchend: "hi".to_owned(),
+                matchend: Box::new(UnresolvedExpr::Variable("hi".to_owned())),
                 branches: HashMap::new(),
             })),
             Box::new(UnresolvedExpr::IntLit(6))
@@ -378,7 +378,7 @@ fn test_parse11() {
         parse(tokens.into_iter().map(Ok)).parse_expr(),
         Ok(UnresolvedExpr::Apply(
             Box::new(UnresolvedExpr::Match(Matching {
-                matchend: "hi".to_owned(),
+                matchend: Box::new(UnresolvedExpr::Variable("hi".to_owned())),
                 branches: case_map,
             })),
             Box::new(UnresolvedExpr::IntLit(6))
@@ -406,7 +406,7 @@ fn test_parse12() {
         Token::ParenR,
     ];
     let inner_match = Box::new(UnresolvedExpr::Match(Matching {
-        matchend: "hi".to_owned(),
+        matchend: Box::new(UnresolvedExpr::Variable("hi".to_owned())),
         branches: HashMap::new(),
     }));
     let func = UnresolvedExpr::Function {

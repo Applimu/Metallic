@@ -68,7 +68,8 @@ fn resolve_expr(
         UnresolvedExpr::IntLit(n) => Ok(Expr::Atom(Atomic::IntLit(n))),
         UnresolvedExpr::Unit => Ok(Expr::Atom(Atomic::Value(Internal::Iunit))),
         UnresolvedExpr::Match(Matching { matchend, branches }) => {
-            let atom = resolve_name(global_names, local_names, case_groups, matchend)?;
+            let resolved_matchend =
+                resolve_expr(global_names, local_names, case_groups, *matchend)?;
 
             'outer: for (enum_name, enum_variants) in case_groups {
                 // verify if this enum's variants are equal to the branches
@@ -96,7 +97,7 @@ fn resolve_expr(
 
                 return Ok(Expr::Match {
                     enum_name: enum_name.clone(),
-                    matchend: Rc::new(Expr::Atom(atom)),
+                    matchend: Rc::new(resolved_matchend),
                     branches: resolved_branches,
                 });
             }

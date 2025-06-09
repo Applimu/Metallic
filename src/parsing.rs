@@ -247,7 +247,7 @@ pub struct Binding {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Matching {
-    pub matchend: String,
+    pub matchend: Box<UnresolvedExpr>,
     pub branches: HashMap<String, UnresolvedExpr>,
 }
 
@@ -489,7 +489,7 @@ where
         self.expect_keyword(Keyword::Match)?;
 
         // println!("MATCH TOKEN ACCEPTED -- READING IDENTIFIER");
-        let matchend: String = self.expect_identifier()?;
+        let matchend = Box::new(self.parse_expr()?);
         // println!("MATCHEND: {} ACCEPTED -- READING CASES", matchend);
 
         let mut branches: HashMap<String, UnresolvedExpr> = HashMap::new();
