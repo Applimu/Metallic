@@ -21,6 +21,7 @@ pub enum Token {
     ParenL,
     ParenR,
     Identifier(String),
+    Stringlit(String),
     Number(i64),
     Keyword(Keyword),
 }
@@ -113,6 +114,14 @@ impl<'a> Iterator for Tokens<'a> {
         while self.next_to_read.len() == 0 {
             self.next_to_read = self.next_nowhitespace_substr()?;
         }
+
+        if &self.next_to_read[0..1] == "\"" {
+            let last_idx = self.next_to_read.len() - 1;
+            assert_eq!("\"", &self.next_to_read[last_idx..last_idx + 1]);
+            let new_str = self.next_to_read[1..last_idx].to_string();
+            return Some(Ok(Token::Stringlit(new_str)));
+        }
+
         // self.next_to_read is a non-empty string with no whitespace characters
         if let Some(kwd) = try_as_keyword(&self.next_to_read) {
             self.next_to_read = "";
@@ -173,7 +182,21 @@ impl<'a> Tokens<'a> {
             }
         };
 
-        // now keep going until we find whitespace or the beginning of a comment
+        // If the first valid non-whitespace character is a ", then this
+        // is a string.
+        if &self.src[begin_idx..begin_idx + 1] == "\"" {
+            loop {
+                // TODO: make this cause an error rather than just a None
+                let (idx, chr) = iterator.next()?;
+                if chr == '"' {
+                    let new_chunk = &self.src[begin_idx..idx + 1];
+                    self.src = &self.src[idx + 1..];
+                    return Some(new_chunk);
+                }
+            }
+        }
+
+        // Otherwise we just keep going until we find whitespace or the beginning of a comment
         let end_idx: usize = loop {
             if let Some((idx, chr)) = iterator.next() {
                 if chr.is_whitespace() || self.src.get(idx..idx + 2) == Some("//") {
@@ -332,6 +355,10 @@ where
                 }
                 Some(Token::Number(n)) => {
                     push_as_arg(&mut paren_stack, UnresolvedExpr::IntLit(*n));
+                    self.tokens.next(); // eat token
+                }
+                Some(Token::Stringlit(s)) => {
+                    push_as_arg(&mut paren_stack, UnresolvedExpr::StringLit(s.clone()));
                     self.tokens.next(); // eat token
                 }
                 Some(Token::ParenL) => {
