@@ -118,7 +118,6 @@ impl<'a> Iterator for Tokens<'a> {
         }
 
         if &self.next_to_read[0..1] == "\"" {
-            println!("FOUND STRING: {}", self.next_to_read);
             let last_idx = self.next_to_read.len() - 1;
             assert_eq!("\"", &self.next_to_read[last_idx..last_idx + 1]);
             if last_idx == 0 {
@@ -192,7 +191,6 @@ impl<'a> Tokens<'a> {
                 break idx;
             }
         };
-        println!("HI");
 
         // If the first valid non-whitespace character is a ", then this
         // is a string.
@@ -327,11 +325,6 @@ where
         let mut paren_stack: Vec<UnresolvedExpr> = Vec::new();
         let mut depth: u32 = 0;
         loop {
-            // println!(
-            //     "Now accepting token: {:?}\nparen_stack = {:?}",
-            //     self.tokens.peek(),
-            //     paren_stack
-            // );
             match self.peek_next_token()? {
                 None => break,
                 Some(Token::Keyword(Keyword::Def)) => break,
@@ -485,12 +478,9 @@ where
     }
 
     fn parse_match(&mut self) -> Result<Matching, ParseError<'a>> {
-        // println!("PARSING MATCH STATEMENT!");
         self.expect_keyword(Keyword::Match)?;
 
-        // println!("MATCH TOKEN ACCEPTED -- READING IDENTIFIER");
         let matchend = Box::new(self.parse_expr()?);
-        // println!("MATCHEND: {} ACCEPTED -- READING CASES", matchend);
 
         let mut branches: HashMap<String, UnresolvedExpr> = HashMap::new();
         while !matches!(self.peek_next_token()?, Some(Token::Keyword(Keyword::End))) {
