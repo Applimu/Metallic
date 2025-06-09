@@ -1,5 +1,7 @@
 use std::{collections::HashMap, iter::Peekable, str::Chars};
 
+use crate::resolve::UnresolvedExpr;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Keyword {
     Def,
@@ -234,29 +236,13 @@ pub fn tokenize<'a>(raw_src: &'a str) -> Tokens<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UnresolvedExpr {
-    Apply(Box<UnresolvedExpr>, Box<UnresolvedExpr>),
-    Function {
-        name: String,
-        input_type: Box<UnresolvedExpr>,
-        output: Box<UnresolvedExpr>,
-    },
-    Variable(String),
-    IntLit(i64),
-    StringLit(String),
-    Unit,
-    Match(Matching),
-    Let(Box<Binding>, Box<UnresolvedExpr>),
-}
-
 // code which is of the form <Expr>: <name> := <Expr>
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Binding {
-    pub(crate) var_name: String,
+    pub var_name: String,
     // TODO: make type_sig optional
-    pub(crate) type_sig: UnresolvedExpr,
-    pub(crate) value: UnresolvedExpr,
+    pub type_sig: UnresolvedExpr,
+    pub value: UnresolvedExpr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

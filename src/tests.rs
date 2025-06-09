@@ -3,9 +3,9 @@ use std::{collections::HashMap, rc::Rc};
 use crate::{
     Atomic, Expr, Internal, Type, interpret, make_program,
     parsing::{
-        Binding, Command, Keyword, Matching, ParseError, Token, UnresolvedExpr, parse, tokenize,
-        tokenize_number,
+        Binding, Command, Keyword, Matching, ParseError, Token, parse, tokenize, tokenize_number,
     },
+    resolve::UnresolvedExpr,
     runtime::Val,
 };
 

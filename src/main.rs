@@ -3,8 +3,8 @@ use std::io::Read;
 use std::rc::Rc;
 use std::{collections::HashMap, env};
 
-use parsing::{Binding, Command, ParseError, UnresolvedExpr};
-use resolve::{ResolveError, resolve_exprs};
+use parsing::{Binding, Command, ParseError};
+use resolve::{ResolveError, UnresolvedExpr, resolve_exprs};
 use runtime::{ArrFunc, Function, RuntimeError, Val, interpret};
 use type_checking::CheckerError;
 

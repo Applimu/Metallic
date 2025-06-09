@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     Atomic, Expr, Internal,
-    parsing::{Binding, Matching, UnresolvedExpr},
+    parsing::{Binding, Matching},
 };
 
 //TODO: create a better error message
@@ -14,6 +14,22 @@ pub enum ResolveError {
     UnknownName(String),
     NotALocalVariable(String),
     UnknownSetOfVariants(HashSet<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnresolvedExpr {
+    Apply(Box<UnresolvedExpr>, Box<UnresolvedExpr>),
+    Function {
+        name: String,
+        input_type: Box<UnresolvedExpr>,
+        output: Box<UnresolvedExpr>,
+    },
+    Variable(String),
+    IntLit(i64),
+    StringLit(String),
+    Unit,
+    Match(Matching),
+    Let(Box<Binding>, Box<UnresolvedExpr>),
 }
 
 // Resolves all names inside an expression and converts them into an indices of the provided array
@@ -45,43 +61,14 @@ fn resolve_expr(
                 output: Rc::new(output),
             })
         }
-        UnresolvedExpr::Variable(s) => {
-            // local variables shadow globals shadow internal
-            if let Some(value) = get_from_locals(local_names, &s) {
-                return Ok(Expr::Atom(Atomic::Local(value)));
-            }
-            for (i, name) in global_names.iter().enumerate() {
-                if *name == s {
-                    return Ok(Expr::Atom(Atomic::Global(i)));
-                }
-            }
-
-            for (k, v) in case_groups.iter() {
-                // println!("{:?}: {:?}", k, v);
-                if *k == s {
-                    return Ok(Expr::Atom(Atomic::EnumType(k.clone())));
-                }
-                for (i, variant) in v.iter().enumerate() {
-                    if *variant == s {
-                        return Ok(Expr::Atom(Atomic::EnumVariant(k.clone(), i)));
-                    }
-                }
-            }
-
-            match Internal::try_as_internal(&s) {
-                Some(v) => Ok(Expr::Atom(Atomic::Value(v))),
-                None => Err(ResolveError::UnknownName(s)),
-            }
+        UnresolvedExpr::Variable(name) => {
+            resolve_name(global_names, local_names, case_groups, name).map(Expr::Atom)
         }
         UnresolvedExpr::StringLit(s) => Ok(Expr::Atom(Atomic::StringLit(s))),
         UnresolvedExpr::IntLit(n) => Ok(Expr::Atom(Atomic::IntLit(n))),
         UnresolvedExpr::Unit => Ok(Expr::Atom(Atomic::Value(Internal::Iunit))),
         UnresolvedExpr::Match(Matching { matchend, branches }) => {
-            // dbg!(&local_names);
-            let Some(local_idx) = get_from_locals(local_names, &matchend) else {
-                // right now I am only allowing for local variables in match statements.
-                return Err(ResolveError::NotALocalVariable(matchend));
-            };
+            let atom = resolve_name(global_names, local_names, case_groups, matchend)?;
 
             'outer: for (enum_name, enum_variants) in case_groups {
                 // verify if this enum's variants are equal to the branches
@@ -109,7 +96,7 @@ fn resolve_expr(
 
                 return Ok(Expr::Match {
                     enum_name: enum_name.clone(),
-                    matchend: Rc::new(Expr::Atom(Atomic::Local(local_idx))),
+                    matchend: Rc::new(Expr::Atom(atom)),
                     branches: resolved_branches,
                 });
             }
@@ -135,6 +122,40 @@ fn resolve_expr(
                 expr: Rc::new(expr),
             })
         }
+    }
+}
+
+fn resolve_name(
+    global_names: &Vec<String>,
+    local_names: &mut Vec<String>,
+    case_groups: &HashMap<String, Vec<String>>,
+    s: String,
+) -> Result<Atomic, ResolveError> {
+    // local variables shadow globals shadow internal
+    if let Some(value) = get_from_locals(local_names, &s) {
+        return Ok(Atomic::Local(value));
+    }
+    for (i, name) in global_names.iter().enumerate() {
+        if *name == s {
+            return Ok(Atomic::Global(i));
+        }
+    }
+
+    for (k, v) in case_groups.iter() {
+        // println!("{:?}: {:?}", k, v);
+        if *k == s {
+            return Ok(Atomic::EnumType(k.clone()));
+        }
+        for (i, variant) in v.iter().enumerate() {
+            if *variant == s {
+                return Ok(Atomic::EnumVariant(k.clone(), i));
+            }
+        }
+    }
+
+    match Internal::try_as_internal(&s) {
+        Some(v) => Ok(Atomic::Value(v)),
+        None => Err(ResolveError::UnknownName(s)),
     }
 }
 
