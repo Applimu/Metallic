@@ -532,7 +532,7 @@ fn test_interpret1() {
         Rc::new(Expr::Atom(Atomic::Value(Internal::IUnit))),
     );
 
-    match interpret(Vec::new(), &val) {
+    match interpret(&[], &val) {
         Ok(res) => assert_eq!(*res, Val::Type(Rc::new(Type::Int))),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     };
@@ -559,7 +559,7 @@ fn test_interpret2() {
         Rc::new(Type::Int),
         Rc::new(Type::Type),
     )));
-    match interpret(global, &val) {
+    match interpret(&global, &val) {
         Ok(v) => assert_eq!(*v, expected),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
@@ -585,7 +585,7 @@ fn test_interpret3() {
             Rc::new(Val::IntLit(-1700)),
         )),
     );
-    match interpret(global, &evals[0]) {
+    match interpret(&global, &evals[0]) {
         Ok(v) => assert_eq!(*v, expected),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
@@ -606,11 +606,11 @@ fn test_interpret4() {
     let expected_0: Rc<Val> = Rc::new(Val::IntLit(-10));
     let expected_1: Rc<Val> = Rc::new(Val::IntLit(31));
     dbg!(&evals);
-    match interpret(global.clone(), &evals[0]) {
+    match interpret(&global, &evals[0]) {
         Ok(v) => assert_eq!(v, expected_0),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
-    match interpret(global, &evals[1]) {
+    match interpret(&global, &evals[1]) {
         Ok(v) => assert_eq!(v, expected_1),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
@@ -630,7 +630,7 @@ fn test_interpret5() {
     assert!(evals.len() == 1);
 
     let expected: Val = Val::IntLit(26);
-    match interpret(global, &evals[0]) {
+    match interpret(&global, &evals[0]) {
         Ok(v) => assert_eq!(*v, expected),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
@@ -660,19 +660,19 @@ fn test_interpret6() {
     assert!(global.len() == 1);
     assert!(evals.len() == 4);
 
-    match interpret(global.clone(), &evals[0]) {
+    match interpret(&global, &evals[0]) {
         Ok(v) => assert_eq!(*v, Val::IntLit(8)),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
-    match interpret(global.clone(), &evals[1]) {
+    match interpret(&global, &evals[1]) {
         Ok(v) => assert_eq!(*v, Val::IntLit(4)),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
-    match interpret(global.clone(), &evals[2]) {
+    match interpret(&global, &evals[2]) {
         Ok(v) => assert_eq!(*v, Val::IntLit(4)),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
-    match interpret(global.clone(), &evals[3]) {
+    match interpret(&global, &evals[3]) {
         Ok(v) => assert_eq!(*v, Val::IntLit(2)),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }

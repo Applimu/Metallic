@@ -67,6 +67,7 @@ pub enum Type {
         family: Rc<ArrFunc>,
     },
     Enum(String),
+    IO,
 }
 
 impl Type {
@@ -93,6 +94,8 @@ pub enum Internal {
     Ifalse,
     Ieq,
     Iunit,
+    Igetln,
+    Iprintln,
 }
 
 impl Internal {
@@ -129,6 +132,11 @@ impl Internal {
                     Rc::new(Type::Bool()),
                 )),
             ),
+            Internal::Igetln => Type::FunctionType(
+                Rc::new(Type::FunctionType(Rc::new(Type::String), Rc::new(Type::IO))),
+                Rc::new(Type::IO),
+            ),
+            Internal::Iprintln => Type::FunctionType(Rc::new(Type::String), Rc::new(Type::IO)),
         }
     }
 
@@ -149,6 +157,8 @@ impl Internal {
             Internal::Itrue => Val::Enum("Bool".to_owned(), 1),
             Internal::Ifalse => Val::Enum("Bool".to_owned(), 0),
             Internal::Ieq => Val::Function(Function::Arrow(ArrFunc::IntEq)),
+            Internal::Igetln => Val::Function(Function::Arrow(ArrFunc::GetLn)),
+            Internal::Iprintln => Val::Function(Function::Arrow(ArrFunc::PrintLn)),
         }
     }
 
@@ -166,6 +176,8 @@ impl Internal {
             "true" => Internal::Itrue,
             "false" => Internal::Ifalse,
             "eq" => Internal::Ieq,
+            "getln" => Internal::Igetln,
+            "println" => Internal::Iprintln,
             _ => return None,
         })
     }
@@ -275,7 +287,7 @@ pub fn main() {
         make_program(src.as_str()).expect("failed to compile program");
     println!("Interpretting program!");
     for e in resolved_evals {
-        let result = interpret(resolved_values.clone(), &e);
+        let result = interpret(&resolved_values, &e);
         println!("evaluation result := {:?}", result);
     }
 }

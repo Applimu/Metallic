@@ -13,6 +13,7 @@ pub enum Val {
     Function(Function),
     Type(Rc<Type>),
     Enum(String, usize),
+    IO(IOAction),
 }
 
 // TODO: create better error messages
@@ -22,6 +23,34 @@ pub enum RuntimeError {
     NotAFunction { value: Val },
     NotAnEnum(Val),
     NotAPair(Val),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IOAction {
+    PrintLn(String),
+    GetLn(Function),
+    Seq(Rc<IOAction>, Rc<IOAction>),
+    Done,
+}
+
+fn run_io_action(ctx: &mut Context, action: &IOAction) -> Result<(), RuntimeError> {
+    match action {
+        IOAction::PrintLn(s) => {
+            println!("{}", s);
+            Ok(())
+        }
+        IOAction::GetLn(f) => {
+            let mut s = String::new();
+            std::io::stdin().read_line(&mut s).unwrap();
+            let next_action = f.apply_to(ctx, Rc::new(Val::StringLit(s)))?.get_as_io()?;
+            run_io_action(ctx, &next_action)
+        }
+        IOAction::Seq(a, b) => {
+            run_io_action(ctx, a.as_ref())?;
+            run_io_action(ctx, b.as_ref())
+        }
+        IOAction::Done => Ok(()),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +70,8 @@ pub enum ArrFunc {
     PartialPairType(Rc<Type>),
     IntEq,
     PartialIntEq(i64),
+    GetLn,
+    PrintLn,
 }
 
 impl ArrFunc {
@@ -126,6 +157,14 @@ impl ArrFunc {
                     if *x == y { 1 } else { 0 },
                 )))
             }
+            ArrFunc::GetLn => {
+                let f = arg.get_as_fn()?;
+                Ok(Rc::new(Val::IO(IOAction::GetLn(f.clone()))))
+            }
+            ArrFunc::PrintLn => {
+                let s = arg.get_as_string()?;
+                Ok(Rc::new(Val::IO(IOAction::PrintLn(s))))
+            }
         }
     }
 
@@ -146,6 +185,8 @@ impl ArrFunc {
             ArrFunc::PartialPairType(_) => Type::Type,
             ArrFunc::IntEq => Type::Int,
             ArrFunc::PartialIntEq(_) => Type::Int,
+            ArrFunc::GetLn => Type::FunctionType(Rc::new(Type::String), Rc::new(Type::IO)),
+            ArrFunc::PrintLn => Type::String,
         }
     }
 
@@ -179,6 +220,8 @@ impl ArrFunc {
                 Type::FunctionType(Rc::new(Type::Int), Rc::new(Type::Enum("Bool".to_owned())))
             }
             ArrFunc::PartialIntEq(_) => Type::Enum("Bool".to_owned()),
+            ArrFunc::GetLn => Type::IO,
+            ArrFunc::PrintLn => Type::IO,
         }
     }
 }
@@ -247,9 +290,9 @@ impl Function {
             Function::Arrow(f) => f.get_input_type(),
             Function::DepProd(f) => f.get_input_type(),
             Function::Closure {
-                captured_vars,
-                code,
-            } => todo!("Don't know how to get types of closures"),
+                captured_vars: _,
+                code: _,
+            } => todo!("Getting types of closures not implemented"),
         }
     }
 
@@ -266,7 +309,7 @@ impl Function {
                 // to align with Expr::Local(_)s
                 new_locals.push(arg);
                 let mut new_ctx = Context {
-                    globals: ctx.globals.clone(),
+                    globals: ctx.globals,
                     locals: new_locals,
                 };
                 let result = interpret_with_locals(&mut new_ctx, expr);
@@ -284,6 +327,26 @@ impl Val {
             Val::IntLit(n) => Ok(*n),
             _ => Err(RuntimeError::TypeError {
                 expected: Type::Int,
+                found: self.clone(),
+            }),
+        }
+    }
+
+    pub fn get_as_string(&self) -> Result<String, RuntimeError> {
+        match self {
+            Val::StringLit(s) => Ok(s.clone()),
+            _ => Err(RuntimeError::TypeError {
+                expected: Type::String,
+                found: self.clone(),
+            }),
+        }
+    }
+
+    pub fn get_as_io(&self) -> Result<IOAction, RuntimeError> {
+        match self {
+            Val::IO(io) => Ok(io.clone()),
+            _ => Err(RuntimeError::TypeError {
+                expected: Type::IO,
                 found: self.clone(),
             }),
         }
@@ -348,18 +411,19 @@ impl Val {
                 code: _,
             }) => todo!("getting types of closures not implemented :/"),
             Val::Enum(enum_name, _) => Type::Enum(enum_name.clone()),
+            Val::IO(_) => Type::IO,
         })
     }
 }
 
 #[derive(Debug, Clone)]
-struct Context {
-    globals: Vec<Rc<Expr>>,
+struct Context<'a> {
+    globals: &'a [Rc<Expr>],
     locals: Vec<Rc<Val>>,
 }
 
-impl Context {
-    pub const fn new(globals: Vec<Rc<Expr>>) -> Self {
+impl<'a> Context<'a> {
+    pub const fn new(globals: &'a [Rc<Expr>]) -> Self {
         Self {
             globals,
             locals: Vec::new(),
@@ -376,7 +440,7 @@ fn interpret_atom(ctx: &mut Context, atom: &Atomic) -> Result<Rc<Val>, RuntimeEr
         Atomic::Local(i) => Ok(ctx.get_local(i).clone()),
         Atomic::Global(i) => {
             // keeping current context isn't necessary for this
-            interpret(ctx.globals.clone(), ctx.globals[*i].as_ref())
+            interpret(ctx.globals, ctx.globals[*i].as_ref())
         }
         Atomic::IntLit(n) => Ok(Rc::new(Val::IntLit(*n))),
         Atomic::StringLit(s) => Ok(Rc::new(Val::StringLit(s.clone()))),
@@ -434,9 +498,9 @@ fn interpret_with_locals(ctx: &mut Context, to_eval: &Expr) -> Result<Rc<Val>, R
     }
 }
 
-pub fn interpret(globals: Vec<Rc<Expr>>, to_eval: &Expr) -> Result<Rc<Val>, RuntimeError> {
+pub fn interpret(globals: &[Rc<Expr>], to_eval: &Expr) -> Result<Rc<Val>, RuntimeError> {
     let mut ctx: Context = Context::new(globals);
     let res = interpret_with_locals(&mut ctx, to_eval);
-    assert!(ctx.locals.len() == 0);
+    assert!(ctx.locals.is_empty());
     res
 }

@@ -15,8 +15,8 @@ impl Expr {
     // recursively checks that the type of everything inside the expression has no type errors.
     fn get_type_checked(
         &self,
-        globals: &Vec<Rc<Expr>>,
-        globals_types: &Vec<Rc<Type>>,
+        globals: &[Rc<Expr>],
+        globals_types: &[Rc<Type>],
     ) -> Result<Rc<Type>, CheckerError> {
         let mut locals = Vec::new();
         let res = self.get_type_checked_with_locals(globals, globals_types, &mut locals);
@@ -27,8 +27,8 @@ impl Expr {
     }
     fn get_type_checked_with_locals(
         &self,
-        globals: &Vec<Rc<Expr>>,
-        globals_types: &Vec<Rc<Type>>,
+        globals: &[Rc<Expr>],
+        globals_types: &[Rc<Type>],
         locals: &mut Vec<Rc<Type>>,
     ) -> Result<Rc<Type>, CheckerError> {
         dbg!(self);
@@ -66,7 +66,7 @@ impl Expr {
                 output,
             } => {
                 let prev_locals_len = locals.len();
-                let val: Rc<Val> = interpret(globals.clone(), type_expr)?;
+                let val: Rc<Val> = interpret(&globals, type_expr)?;
                 let input_type = val.get_as_type()?;
                 locals.push(input_type.clone());
                 let checked_output_type =
@@ -111,8 +111,7 @@ impl Expr {
                 new_value,
                 expr,
             } => {
-                let new_value_type_given =
-                    interpret(globals.clone(), new_value_type)?.get_as_type()?;
+                let new_value_type_given = interpret(&globals, new_value_type)?.get_as_type()?;
 
                 let new_value_type_found =
                     new_value.get_type_checked_with_locals(globals, globals_types, locals)?;
@@ -146,8 +145,8 @@ impl From<RuntimeError> for CheckerError {
 }
 
 pub fn type_check_globals(
-    globals: &Vec<Rc<Expr>>,
-    given_global_types: &Vec<Rc<Type>>,
+    globals: &[Rc<Expr>],
+    given_global_types: &[Rc<Type>],
 ) -> Result<(), CheckerError> {
     for (expr, given) in globals.iter().zip(given_global_types.iter()) {
         let found_type = expr.get_type_checked(globals, given_global_types)?;
@@ -162,22 +161,22 @@ pub fn type_check_globals(
 }
 
 pub fn is_wellformed_type(
-    globals: &Vec<Rc<Expr>>,
+    globals: &[Rc<Expr>],
     maybe_type: &Expr,
 ) -> Result<Rc<Type>, RuntimeError> {
-    let yeah = interpret(globals.clone(), maybe_type)?;
+    let yeah = interpret(&globals, maybe_type)?;
     yeah.get_as_type()
 }
 
 // checks the type of each type signature and makes sure that it is a type
 pub fn check_wellformed_types(
-    globals: &Vec<Rc<Expr>>,
+    globals: &[Rc<Expr>],
     globals_types: Vec<Rc<Expr>>,
 ) -> Result<Vec<Rc<Type>>, RuntimeError> {
     let mut types = Vec::new();
     for type_expr in globals_types {
         // wrt the note at the top, notice how this requires interpretting on non-typechecked code here.
-        let type_sig = interpret(globals.clone(), &type_expr)?;
+        let type_sig = interpret(&globals, &type_expr)?;
         types.push(type_sig.get_as_type()?);
     }
 
