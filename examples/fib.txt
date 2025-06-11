@@ -3,8 +3,8 @@ def fun Int (fun Int (fun Int Int)) : fib_helper :=
 	fn Int: a do
 	fn Int: b do
 	fn Int: i do
-	let Bool: i_is_zero := eq i 0 in
-	match i_is_zero
+	// let Bool: i_is_zero := eq i 0 in
+	match eq i 0
 		case true do b
 		case false do fib_helper b (add a b) (add i -1)
 	end

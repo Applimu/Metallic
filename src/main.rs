@@ -31,6 +31,20 @@ pub enum Atomic {
     StringLit(String),
 }
 
+impl Atomic {
+    fn get_type(&self, globals_types: &[Rc<Type>], locals: &[Rc<Type>]) -> Rc<Type> {
+        match self {
+            Atomic::Local(i) => locals[*i].clone(),
+            Atomic::Global(i) => globals_types[*i].clone(),
+            Atomic::Value(internal) => Rc::new(internal.get_type()),
+            Atomic::EnumVariant(name, _) => Rc::new(Type::Enum(name.clone())),
+            Atomic::EnumType(_) => Rc::new(Type::Type),
+            Atomic::IntLit(_) => Rc::new(Type::Int),
+            Atomic::StringLit(_) => Rc::new(Type::String),
+        }
+    }
+}
+
 // an expression where each variable name has been resolved
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
@@ -42,7 +56,6 @@ pub enum Expr {
     Atom(Atomic),
     Match {
         enum_name: String,
-        // match statements can only take local variables right now
         matchend: Rc<Expr>,
         branches: Vec<Rc<Expr>>,
     },
@@ -63,7 +76,7 @@ pub enum Type {
     FunctionType(Rc<Type>, Rc<Type>),
     DepProd {
         // this function should always return a Type
-        // and should have the same input type as the input_type
+        // TODO: Allow dependent products over closures
         family: Rc<ArrFunc>,
     },
     Enum(String),

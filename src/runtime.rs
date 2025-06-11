@@ -61,13 +61,15 @@ pub enum ArrFunc {
     Fun,
     PartialFun(Rc<Type>),
     DepProdOf(Rc<Type>),
-    TypeOfDepProd,
-    PairOf(Rc<Type>, Rc<Type>), // this is of type: t1 -> t2 -> t1 & t2
-    PartialPairOf(Rc<Type>, Rc<Type>, Rc<Val>), // of type: t2 -> t1 & t2
-    OutputTypeOfMkPair,         // this is the value: fn Type: t1 do (Type: t2) -> t1 & t2
+    TypeOfDepProd, // fn Type: T do (T -> Type) -> Type
+
+    PairOf(Rc<Type>, Rc<Type>), // fn t1: x do  (fn t2: y do (x,y))
+    PartialPairOf(Rc<Type>, Rc<Type>, Rc<Val>), // fn t2: y do (x,y)
+    OutputTypeOfMkPair,         // fn Type: t1 do (Type: t2) -> t1 & t2
     TypeOfPartialMakePair(Rc<Type>), // fn Type: t2 do  t1 & t2
     PairType,
     PartialPairType(Rc<Type>),
+
     IntEq,
     PartialIntEq(i64),
     GetLn,
@@ -452,7 +454,7 @@ fn interpret_atom(ctx: &mut Context, atom: &Atomic) -> Result<Rc<Val>, RuntimeEr
     }
 }
 
-fn interpret_with_locals(ctx: &mut Context, to_eval: &Expr) -> Result<Rc<Val>, RuntimeError> {
+pub fn interpret_with_locals(ctx: &mut Context, to_eval: &Expr) -> Result<Rc<Val>, RuntimeError> {
     // dbg!(&ctx);
     // dbg!(to_eval);
     match to_eval {
