@@ -33,7 +33,7 @@ pub enum IOAction {
     Done,
 }
 
-fn run_io_action(ctx: &mut Context, action: &IOAction) -> Result<(), RuntimeError> {
+fn run_io_action(ctx: &mut Context, action: &mut IOAction) -> Result<(), RuntimeError> {
     match action {
         IOAction::PrintLn(s) => {
             println!("{}", s);
@@ -42,12 +42,12 @@ fn run_io_action(ctx: &mut Context, action: &IOAction) -> Result<(), RuntimeErro
         IOAction::GetLn(f) => {
             let mut s = String::new();
             std::io::stdin().read_line(&mut s).unwrap();
-            let next_action = f.apply_to(ctx, Rc::new(Val::StringLit(s)))?.get_as_io()?;
-            run_io_action(ctx, &next_action)
+            let mut next_action = f.apply_to(ctx, Rc::new(Val::StringLit(s)))?.get_as_io()?;
+            run_io_action(ctx, &mut next_action)
         }
         IOAction::Seq(a, b) => {
-            run_io_action(ctx, a.as_ref())?;
-            run_io_action(ctx, b.as_ref())
+            run_io_action(ctx, &mut a.as_ref().clone())?;
+            run_io_action(ctx, &mut b.as_ref().clone())
         }
         IOAction::Done => Ok(()),
     }
@@ -284,6 +284,7 @@ pub enum Function {
         captured_vars: Vec<Rc<Val>>,
         code: Rc<Expr>,
     },
+    PartialApplication(FunctionConstant, Vec<Val>),
 }
 
 impl Function {
@@ -295,6 +296,7 @@ impl Function {
                 captured_vars: _,
                 code: _,
             } => todo!("Getting types of closures not implemented"),
+            Function::PartialApplication(function_constant, args) => todo!(),
         }
     }
 
@@ -304,7 +306,7 @@ impl Function {
             Function::DepProd(f) => f.apply_to(arg),
             Function::Closure {
                 captured_vars,
-                code: expr,
+                code,
             } => {
                 let mut new_locals: Vec<Rc<Val>> = captured_vars.clone();
                 // important that we push the new argument on the end
@@ -314,10 +316,128 @@ impl Function {
                     globals: ctx.globals,
                     locals: new_locals,
                 };
-                let result = interpret_with_locals(&mut new_ctx, expr);
+                interpret_with_locals(&mut new_ctx, code)
+            }
+            Function::PartialApplication(function_constant, args) => {
+                function_constant.reduce(args.clone(), arg).map(Rc::new)
+            }
+        }
+    }
+}
 
-                // dbg!(&result);
-                result
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FunctionConstant {
+    Add,
+    Fun,
+    PairType,
+    IntEq,
+    GetLn,
+    PrintLn,
+    TypeOfDepProd,      // fn Type: T do (T -> Type) -> Type
+    OutputTypeOfMkPair, // fn Type: t1 do (Type: t2) -> t1 & t2
+
+    DepProd,
+    Pair,
+}
+
+impl FunctionConstant {
+    fn reduce(self, args: Vec<Val>, arg: Rc<Val>) -> Result<Val, RuntimeError> {
+        let args = Vec::from_iter(args.iter().chain(Some(arg.as_ref())).map(Clone::clone));
+        match self {
+            FunctionConstant::Add => {
+                if args.len() >= 2 {
+                    assert!(args.len() == 2);
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Ok(Val::IntLit(x + y))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
+            FunctionConstant::Fun => {
+                if args.len() >= 2 {
+                    assert!(args.len() == 2);
+                    let x = args[0].get_as_type()?;
+                    let y = args[1].get_as_type()?;
+                    Ok(Val::Type(Rc::new(Type::FunctionType(x, y))))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
+            FunctionConstant::PairType => {
+                if args.len() >= 2 {
+                    assert!(args.len() == 2);
+                    let x = args[0].get_as_type()?;
+                    let y = args[1].get_as_type()?;
+                    Ok(Val::Type(Rc::new(Type::Pair(x, y))))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
+            FunctionConstant::IntEq => {
+                if args.len() >= 2 {
+                    assert!(args.len() == 2);
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Ok(Val::Enum("Bool".to_owned(), if x == y { 1 } else { 0 }))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
+            FunctionConstant::GetLn => {
+                if args.len() >= 1 {
+                    assert!(args.len() == 1);
+                    let x = args[0].get_as_fn()?;
+                    Ok(Val::IO(IOAction::GetLn(x.clone())))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
+            FunctionConstant::PrintLn => {
+                if args.len() >= 1 {
+                    assert!(args.len() == 1);
+                    let x = args[0].get_as_string()?;
+                    Ok(Val::IO(IOAction::PrintLn(x)))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
+            FunctionConstant::TypeOfDepProd => {
+                if args.len() >= 1 {
+                    assert!(args.len() == 1);
+                    let x = args[0].get_as_type()?;
+                    let t = Rc::new(Type::Type);
+                    Ok(Val::Type(Rc::new(Type::FunctionType(
+                        Rc::new(Type::FunctionType(x, t.clone())),
+                        t,
+                    ))))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
+            FunctionConstant::OutputTypeOfMkPair => todo!(),
+            FunctionConstant::DepProd => {
+                if args.len() >= 2 {
+                    assert!(args.len() == 2);
+                    let t = args[0].get_as_type()?;
+                    let f = args[1].get_as_fn()?;
+                    todo!("Allow DepProd to accept any function");
+                    // Ok(Val::Type(Rc::new(Type::DepProd { family: f })))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
+            FunctionConstant::Pair => {
+                if args.len() >= 4 {
+                    assert!(args.len() == 4);
+                    let left_type = args[0].get_as_type()?;
+                    let right_type = args[1].get_as_type()?;
+                    let left = Rc::new(args[2].clone());
+                    let right = Rc::new(args[3].clone());
+                    Ok(Val::Pair(left_type, right_type, left, right))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
             }
         }
     }
@@ -412,6 +532,9 @@ impl Val {
                 captured_vars: _,
                 code: _,
             }) => todo!("getting types of closures not implemented :/"),
+            Val::Function(Function::PartialApplication(f, args)) => {
+                todo!("getting type of partial application not implemented :(")
+            }
             Val::Enum(enum_name, _) => Type::Enum(enum_name.clone()),
             Val::IO(_) => Type::IO,
         })

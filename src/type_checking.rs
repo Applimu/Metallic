@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{
     Atomic, Expr, Type,
-    runtime::{RuntimeError, Val, interpret, interpret_with_locals},
+    runtime::{IOAction, RuntimeError, Val, interpret, interpret_with_locals},
 };
 
 // NOTE: I wrote this code before I realized that type checking with
