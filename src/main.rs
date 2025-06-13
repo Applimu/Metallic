@@ -6,7 +6,7 @@ use std::{collections::HashMap, env};
 use parsing::{Binding, Command, ParseError};
 use resolve::{ResolveError, UnresolvedExpr, resolve_exprs};
 use runtime::{Function, FunctionConstant, RuntimeError, Val, interpret};
-use type_checking::CheckerError;
+use type_checking::{CheckerError, type_check_program};
 
 mod parsing;
 mod resolve;
@@ -29,20 +29,6 @@ pub enum Atomic {
     EnumType(String),
     IntLit(i64),
     StringLit(String),
-}
-
-impl Atomic {
-    fn get_type(&self, globals_types: &[Rc<Type>], locals: &[Rc<Type>]) -> Rc<Type> {
-        match self {
-            Atomic::Local(i) => locals[*i].clone(),
-            Atomic::Global(i) => globals_types[*i].clone(),
-            Atomic::Internal(internal) => Rc::new(internal.get_type()),
-            Atomic::EnumVariant(name, _) => Rc::new(Type::Enum(name.clone())),
-            Atomic::EnumType(_) => Rc::new(Type::Type),
-            Atomic::IntLit(_) => Rc::new(Type::Int),
-            Atomic::StringLit(_) => Rc::new(Type::String),
-        }
-    }
 }
 
 // an expression where each variable name has been resolved
@@ -285,7 +271,6 @@ pub struct Program {
     evals: Vec<Rc<Expr>>,
 }
 
-// TODO: make a Program type
 pub fn make_program<'a>(src: &'a str) -> Result<Program, GenericError<'a>> {
     // parsing
     let ast: Vec<Command> = parsing::parse_src(src).map_err(GenericError::ParseError)?;
@@ -302,18 +287,17 @@ pub fn make_program<'a>(src: &'a str) -> Result<Program, GenericError<'a>> {
         .map_err(GenericError::ResolutionError)?;
     println!("Global's types values resolved");
     // Type checking
-    // let checked_types =
-    //     check_wellformed_types(&globals, resolved_types).map_err(GenericError::RuntimeError)?;
-    // println!("Globals' types are well-formed");
-    // type_check_globals(&globals, &checked_types).map_err(GenericError::CheckerError)?;
-    // println!("Program is type checked B)");
-
-    Ok(Program {
+    let prog = Program {
         names: prog.def_names,
         globals,
         global_types: resolved_types,
         evals: resolved_evals,
-    })
+    };
+
+    type_check_program(&prog).map_err(GenericError::CheckerError)?;
+    println!("Program is type-checked!");
+
+    Ok(prog)
 }
 
 pub fn main() {

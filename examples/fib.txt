@@ -10,6 +10,8 @@ def fun Int (fun Int (fun Int Int)) : fib_helper :=
 	end
 
 
+def fun Int Int: five := fn Int: eight do "five"
+
 def fun Int Int : fib := fib_helper 1 0
 
 eval fib 0

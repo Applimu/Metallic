@@ -5,7 +5,7 @@ enum myEnum case1 case2 case3
 def fun myEnum Int: yea := fn myEnum: v do
 	match v
 	case case1 do 5
-	case case2 do fn Int: seven do add seven -7
+	case case2 do 19 //fn Int: seven do add seven -7
 	case case3 do 9
 	end
 	

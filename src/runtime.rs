@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use crate::type_checking::CheckingContext;
 use crate::{Atomic, Expr, Type};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -307,6 +308,21 @@ impl<'a> Context<'a> {
             globals,
             globals_types,
             free_locals: Vec::new(),
+            bound_locals: Vec::new(),
+        }
+    }
+
+    pub fn from_checking_ctx(
+        CheckingContext {
+            globals,
+            global_types,
+            locals,
+        }: &CheckingContext<'a>,
+    ) -> Self {
+        Self {
+            globals,
+            globals_types: global_types,
+            free_locals: locals.clone(),
             bound_locals: Vec::new(),
         }
     }
