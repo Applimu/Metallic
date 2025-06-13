@@ -66,7 +66,7 @@ fn resolve_expr(
         }
         UnresolvedExpr::StringLit(s) => Ok(Expr::Atom(Atomic::StringLit(s))),
         UnresolvedExpr::IntLit(n) => Ok(Expr::Atom(Atomic::IntLit(n))),
-        UnresolvedExpr::Unit => Ok(Expr::Atom(Atomic::Value(Internal::Iunit))),
+        UnresolvedExpr::Unit => Ok(Expr::Atom(Atomic::Internal(Internal::Iunit))),
         UnresolvedExpr::Match(Matching { matchend, branches }) => {
             let resolved_matchend =
                 resolve_expr(global_names, local_names, case_groups, *matchend)?;
@@ -155,7 +155,7 @@ fn resolve_name(
     }
 
     match Internal::try_as_internal(&s) {
-        Some(v) => Ok(Atomic::Value(v)),
+        Some(v) => Ok(Atomic::Internal(v)),
         None => Err(ResolveError::UnknownName(s)),
     }
 }

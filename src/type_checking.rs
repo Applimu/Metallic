@@ -82,7 +82,7 @@ impl Expr {
             Expr::Atom(Atomic::Local(i)) => Ok(locals[locals.len() - 1 - i].clone()),
             Expr::Atom(Atomic::Global(i)) => Ok(globals_types[*i].clone()),
             Expr::Atom(Atomic::IntLit(_)) => Ok(Rc::new(Type::Int)),
-            Expr::Atom(Atomic::Value(val)) => Ok(Rc::new(val.get_type())),
+            Expr::Atom(Atomic::Internal(val)) => Ok(Rc::new(val.get_type())),
             Expr::Atom(Atomic::EnumVariant(ename, _)) => Ok(Rc::new(Type::Enum(ename.clone()))),
             Expr::Atom(Atomic::EnumType(_)) => Ok(Rc::new(Type::Type)),
             Expr::Match {

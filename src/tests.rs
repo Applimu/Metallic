@@ -521,15 +521,15 @@ fn test_interpret1() {
     let val: Expr = Expr::Apply(
         Rc::new(Expr::Apply(
             Rc::new(Expr::Function {
-                input_type: Rc::new(Expr::Atom(Atomic::Value(Internal::IType))),
+                input_type: Rc::new(Expr::Atom(Atomic::Internal(Internal::IType))),
                 output: Rc::new(Expr::Function {
-                    input_type: Rc::new(Expr::Atom(Atomic::Value(Internal::IType))),
+                    input_type: Rc::new(Expr::Atom(Atomic::Internal(Internal::IType))),
                     output: Rc::new(Expr::Atom(Atomic::Local(0))),
                 }),
             }),
-            Rc::new(Expr::Atom(Atomic::Value(Internal::IInt))),
+            Rc::new(Expr::Atom(Atomic::Internal(Internal::IInt))),
         )),
-        Rc::new(Expr::Atom(Atomic::Value(Internal::IUnit))),
+        Rc::new(Expr::Atom(Atomic::Internal(Internal::IUnit))),
     );
 
     match interpret(&[], &val) {
