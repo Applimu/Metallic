@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    Atomic, Expr, Internal, Type, interpret, make_program,
+    Atomic, Expr, Internal, Program, Type, interpret, make_program,
     parsing::{
         Binding, Command, Keyword, Matching, ParseError, Token, parse, tokenize, tokenize_number,
     },
@@ -532,7 +532,7 @@ fn test_interpret1() {
         Rc::new(Expr::Atom(Atomic::Internal(Internal::IUnit))),
     );
 
-    match interpret(&[], &val) {
+    match interpret(&[], &[], &val) {
         Ok(res) => assert_eq!(*res, Val::Type(Rc::new(Type::Int))),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     };
@@ -540,7 +540,12 @@ fn test_interpret1() {
 
 #[test]
 fn test_interpret2() {
-    let (names, global, evals) = make_program(
+    let Program {
+        names,
+        globals,
+        global_types,
+        evals,
+    } = make_program(
         "def fun Int (fun Type (fun Type Type)): f := fn Int: x do
           fn Type: T do
           fn Type: Y do
@@ -548,8 +553,8 @@ fn test_interpret2() {
         eval f -2 Int Type",
     )
     .expect("Failed to parse program");
-    assert!(global.len() == 1);
-    dbg!(&global[0]);
+    assert!(globals.len() == 1);
+    dbg!(&globals[0]);
     assert!(names == vec!["f".to_string()]);
     assert!(&evals.len() == &1);
 
@@ -559,7 +564,7 @@ fn test_interpret2() {
         Rc::new(Type::Int),
         Rc::new(Type::Type),
     )));
-    match interpret(&global, &val) {
+    match interpret(&globals, &global_types, &val) {
         Ok(v) => assert_eq!(*v, expected),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
@@ -567,11 +572,15 @@ fn test_interpret2() {
 
 #[test]
 fn test_interpret3() {
-    let (names, global, evals) =
-        make_program("eval pair Int (PairType Unit Int) 6 (pair Unit Int () -1700)")
-            .expect("Failed to parse program");
+    let Program {
+        names,
+        globals,
+        global_types,
+        evals,
+    } = make_program("eval pair Int (PairType Unit Int) 6 (pair Unit Int () -1700)")
+        .expect("Failed to parse program");
     assert!(names.len() == 0);
-    assert!(global.len() == 0);
+    assert!(globals.len() == 0);
     assert!(evals.len() == 1);
     dbg!(&evals[0]);
     let expected: Val = Val::Pair(
@@ -585,7 +594,7 @@ fn test_interpret3() {
             Rc::new(Val::IntLit(-1700)),
         )),
     );
-    match interpret(&global, &evals[0]) {
+    match interpret(&globals, &global_types, &evals[0]) {
         Ok(v) => assert_eq!(*v, expected),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
@@ -593,24 +602,29 @@ fn test_interpret3() {
 
 #[test]
 fn test_interpret4() {
-    let (names, global, evals) = make_program(
+    let Program {
+        names,
+        globals,
+        global_types,
+        evals,
+    } = make_program(
         "def fun Bool Int : f := fn Bool : b do match b case true do -10 case false do 31 end
             eval f true
             eval f false",
     )
     .expect("Failed to parse program");
     assert!(names.len() == 1);
-    assert!(global.len() == 1);
+    assert!(globals.len() == 1);
     assert!(evals.len() == 2);
 
     let expected_0: Rc<Val> = Rc::new(Val::IntLit(-10));
     let expected_1: Rc<Val> = Rc::new(Val::IntLit(31));
     dbg!(&evals);
-    match interpret(&global, &evals[0]) {
+    match interpret(&globals, &global_types, &evals[0]) {
         Ok(v) => assert_eq!(v, expected_0),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
-    match interpret(&global, &evals[1]) {
+    match interpret(&globals, &global_types, &evals[1]) {
         Ok(v) => assert_eq!(v, expected_1),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
@@ -618,7 +632,12 @@ fn test_interpret4() {
 
 #[test]
 fn test_interpret5() {
-    let (names, global, evals) = make_program(
+    let Program {
+        names,
+        globals,
+        global_types,
+        evals,
+    } = make_program(
         "eval
             let Int: a := 7 in
             let Int : b := 19 in
@@ -626,11 +645,11 @@ fn test_interpret5() {
     )
     .expect("Failed to parse program");
     assert!(names.len() == 0);
-    assert!(global.len() == 0);
+    assert!(globals.len() == 0);
     assert!(evals.len() == 1);
 
     let expected: Val = Val::IntLit(26);
-    match interpret(&global, &evals[0]) {
+    match interpret(&globals, &global_types, &evals[0]) {
         Ok(v) => assert_eq!(*v, expected),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
@@ -638,7 +657,12 @@ fn test_interpret5() {
 
 #[test]
 fn test_interpret6() {
-    let (names, global, evals) = make_program(
+    let Program {
+        names,
+        globals,
+        global_types,
+        evals,
+    } = make_program(
         "
         enum ExampleEnum somebody once told me
 
@@ -657,22 +681,22 @@ fn test_interpret6() {
     )
     .expect("Failed to parse program");
     assert!(names.len() == 1);
-    assert!(global.len() == 1);
+    assert!(globals.len() == 1);
     assert!(evals.len() == 4);
 
-    match interpret(&global, &evals[0]) {
+    match interpret(&globals, &global_types, &evals[0]) {
         Ok(v) => assert_eq!(*v, Val::IntLit(8)),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
-    match interpret(&global, &evals[1]) {
+    match interpret(&globals, &global_types, &evals[1]) {
         Ok(v) => assert_eq!(*v, Val::IntLit(4)),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
-    match interpret(&global, &evals[2]) {
+    match interpret(&globals, &global_types, &evals[2]) {
         Ok(v) => assert_eq!(*v, Val::IntLit(4)),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }
-    match interpret(&global, &evals[3]) {
+    match interpret(&globals, &global_types, &evals[3]) {
         Ok(v) => assert_eq!(*v, Val::IntLit(2)),
         Err(e) => panic!("Interpretting reached error: {:?}", e),
     }

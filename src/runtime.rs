@@ -14,6 +14,8 @@ pub enum Val {
     Type(Rc<Type>),
     Enum(String, usize),
     IO(IOAction),
+    // usize refers to local variable
+    FreeVariable(usize),
 }
 
 // TODO: create better error messages
@@ -75,9 +77,12 @@ impl Function {
                 new_locals.push(arg);
                 let mut new_ctx = Context {
                     globals: ctx.globals,
-                    locals: new_locals,
+                    globals_types: ctx.globals_types,
+                    // I *believe* that there are never free variables when closures are captured??
+                    free_locals: Vec::new(),
+                    bound_locals: new_locals,
                 };
-                interpret_with_locals(&mut new_ctx, code)
+                new_ctx.interpret(code)
             }
             Function::PartialApplication(function_constant, args) => {
                 function_constant.reduce(args.clone(), arg).map(Rc::new)
@@ -265,7 +270,7 @@ impl Val {
 
     // Given a runtime value, obtains the type of the given value. This is different
     // from get_as_type which asserts that the given value is a type and unwraps it
-    pub fn get_type(&self) -> Rc<Type> {
+    pub fn get_type(&self, ctx: &Context) -> Rc<Type> {
         Rc::new(match self {
             Val::Type(_) => Type::Type,
             Val::IntLit(_) => Type::Int,
@@ -281,95 +286,110 @@ impl Val {
             }
             Val::Enum(enum_name, _) => Type::Enum(enum_name.clone()),
             Val::IO(_) => Type::IO,
+            Val::FreeVariable(idx) => return ctx.free_locals[*idx].clone(),
         })
     }
 }
 
 #[derive(Debug, Clone)]
-struct Context<'a> {
+pub struct Context<'a> {
     globals: &'a [Rc<Expr>],
-    locals: Vec<Rc<Val>>,
+    globals_types: &'a [Rc<Expr>],
+    // Only local variables can ever be free variables, so debrujin
+    // indices work fine here
+    free_locals: Vec<Rc<Type>>,
+    bound_locals: Vec<Rc<Val>>,
 }
 
 impl<'a> Context<'a> {
-    pub const fn new(globals: &'a [Rc<Expr>]) -> Self {
+    pub const fn new(globals: &'a [Rc<Expr>], globals_types: &'a [Rc<Expr>]) -> Self {
         Self {
             globals,
-            locals: Vec::new(),
+            globals_types,
+            free_locals: Vec::new(),
+            bound_locals: Vec::new(),
         }
     }
 
-    pub fn get_local(&self, local_idx: &usize) -> &Rc<Val> {
-        &self.locals[*local_idx]
+    pub fn get_local(&self, local_idx: &usize) -> Rc<Val> {
+        if local_idx < &self.free_locals.len() {
+            Rc::new(Val::FreeVariable(*local_idx))
+        } else {
+            self.bound_locals[local_idx - self.free_locals.len()].clone()
+        }
     }
-}
 
-fn interpret_atom(ctx: &mut Context, atom: &Atomic) -> Result<Rc<Val>, RuntimeError> {
-    match atom {
-        Atomic::Local(i) => Ok(ctx.get_local(i).clone()),
-        Atomic::Global(i) => {
-            // keeping current context isn't necessary for this
-            interpret(ctx.globals, ctx.globals[*i].as_ref())
+    fn interpret_atom(&mut self, atom: &Atomic) -> Result<Rc<Val>, RuntimeError> {
+        match atom {
+            Atomic::Local(i) => Ok(self.get_local(i).clone()),
+            Atomic::Global(i) => {
+                // keeping current context isn't necessary for this
+                let mut context = Context::new(self.globals, self.globals_types);
+                context.interpret(self.globals[*i].as_ref())
+            }
+            Atomic::IntLit(n) => Ok(Rc::new(Val::IntLit(*n))),
+            Atomic::StringLit(s) => Ok(Rc::new(Val::StringLit(s.clone()))),
+            Atomic::Internal(val) => Ok(Rc::new(val.val())),
+            Atomic::EnumVariant(name, internal_num) => {
+                Ok(Rc::new(Val::Enum(name.clone(), *internal_num)))
+            }
+            Atomic::EnumType(name) => Ok(Rc::new(Val::Type(Rc::new(Type::Enum(name.clone()))))),
         }
-        Atomic::IntLit(n) => Ok(Rc::new(Val::IntLit(*n))),
-        Atomic::StringLit(s) => Ok(Rc::new(Val::StringLit(s.clone()))),
-        Atomic::Internal(val) => Ok(Rc::new(val.val())),
-        Atomic::EnumVariant(name, internal_num) => {
-            Ok(Rc::new(Val::Enum(name.clone(), *internal_num)))
-        }
-        Atomic::EnumType(name) => Ok(Rc::new(Val::Type(Rc::new(Type::Enum(name.clone()))))),
     }
-}
 
-pub fn interpret_with_locals(ctx: &mut Context, to_eval: &Expr) -> Result<Rc<Val>, RuntimeError> {
-    // dbg!(&ctx);
-    // dbg!(to_eval);
-    match to_eval {
-        Expr::Apply(func, arg) => {
-            let f: Rc<Val> = interpret_with_locals(ctx, func)?;
-            let x: Rc<Val> = interpret_with_locals(ctx, arg)?;
-            let res = f.get_as_fn()?.apply_to(ctx, x);
-            res
-        }
-        Expr::Function {
-            input_type: _,
-            output,
-        } => Ok(Rc::new(Val::Function(Function::Closure {
-            captured_vars: ctx.locals.clone(),
-            code: output.clone(),
-        }))),
-        Expr::Atom(a) => interpret_atom(ctx, a),
-        Expr::Match {
-            enum_name,
-            matchend,
-            branches,
-        } => {
-            let enum_val = interpret_with_locals(ctx, matchend)?;
-            match enum_val.as_ref() {
-                Val::Enum(s, i) => {
-                    assert_eq!(s, enum_name);
-                    interpret_with_locals(ctx, &branches[*i])
+    pub fn interpret(&mut self, to_eval: &Expr) -> Result<Rc<Val>, RuntimeError> {
+        match to_eval {
+            Expr::Apply(func, arg) => {
+                let f: Rc<Val> = self.interpret(func)?;
+                let x: Rc<Val> = self.interpret(arg)?;
+                let res = f.get_as_fn()?.apply_to(self, x);
+                res
+            }
+            Expr::Function {
+                input_type: _,
+                output,
+            } => Ok(Rc::new(Val::Function(Function::Closure {
+                captured_vars: self.bound_locals.clone(),
+                code: output.clone(),
+            }))),
+            Expr::Atom(a) => self.interpret_atom(a),
+            Expr::Match {
+                enum_name,
+                matchend,
+                branches,
+            } => {
+                let enum_val = self.interpret(matchend)?;
+                match enum_val.as_ref() {
+                    Val::Enum(s, i) => {
+                        assert_eq!(s, enum_name);
+                        self.interpret(&branches[*i])
+                    }
+                    val => Err(RuntimeError::NotAnEnum(val.clone())),
                 }
-                val => Err(RuntimeError::NotAnEnum(val.clone())),
+            }
+            Expr::Let {
+                new_value_type: _,
+                new_value,
+                expr,
+            } => {
+                let new_value = self.interpret(new_value)?;
+                self.bound_locals.push(new_value.clone());
+                let res = self.interpret(expr);
+                assert_eq!(self.bound_locals.pop().unwrap(), new_value);
+                res
             }
         }
-        Expr::Let {
-            new_value_type: _,
-            new_value,
-            expr,
-        } => {
-            let new_value = interpret_with_locals(ctx, new_value)?;
-            ctx.locals.push(new_value.clone());
-            let res = interpret_with_locals(ctx, expr);
-            assert_eq!(ctx.locals.pop().unwrap(), new_value);
-            res
-        }
     }
 }
 
-pub fn interpret(globals: &[Rc<Expr>], to_eval: &Expr) -> Result<Rc<Val>, RuntimeError> {
-    let mut ctx: Context = Context::new(globals);
-    let res = interpret_with_locals(&mut ctx, to_eval);
-    assert!(ctx.locals.is_empty());
+pub fn interpret(
+    globals: &[Rc<Expr>],
+    globals_types: &[Rc<Expr>],
+    expr: &Expr,
+) -> Result<Rc<Val>, RuntimeError> {
+    let mut ctx = Context::new(globals, globals_types);
+    let res = ctx.interpret(expr);
+    assert!(ctx.free_locals.len() == 0);
+    assert!(ctx.bound_locals.len() == 0);
     res
 }

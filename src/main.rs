@@ -277,10 +277,16 @@ pub enum GenericError<'a> {
     CheckerError(CheckerError),
 }
 
+pub struct Program {
+    names: Vec<String>,
+    globals: Vec<Rc<Expr>>,
+    // TODO: change this into &'a[Rc<Type>]
+    global_types: Vec<Rc<Expr>>,
+    evals: Vec<Rc<Expr>>,
+}
+
 // TODO: make a Program type
-pub fn make_program<'a>(
-    src: &'a str,
-) -> Result<(Vec<String>, Vec<Rc<Expr>>, Vec<Rc<Expr>>), GenericError<'a>> {
+pub fn make_program<'a>(src: &'a str) -> Result<Program, GenericError<'a>> {
     // parsing
     let ast: Vec<Command> = parsing::parse_src(src).map_err(GenericError::ParseError)?;
     let prog = separate_commands(ast);
@@ -302,7 +308,12 @@ pub fn make_program<'a>(
     // type_check_globals(&globals, &checked_types).map_err(GenericError::CheckerError)?;
     // println!("Program is type checked B)");
 
-    Ok((prog.def_names, globals, resolved_evals))
+    Ok(Program {
+        names: prog.def_names,
+        globals,
+        global_types: resolved_types,
+        evals: resolved_evals,
+    })
 }
 
 pub fn main() {
@@ -320,11 +331,15 @@ pub fn main() {
         .read_to_string(&mut src)
         .expect("Something went wrong when reading the file :/");
 
-    let (_def_names, resolved_values, resolved_evals) =
-        make_program(src.as_str()).expect("failed to compile program");
+    let Program {
+        names: _,
+        globals,
+        global_types,
+        evals,
+    } = make_program(src.as_str()).expect("failed to compile program");
     println!("Interpretting program!");
-    for e in resolved_evals {
-        let result = interpret(&resolved_values, &e);
+    for e in evals {
+        let result = interpret(&globals, &global_types, &e);
         println!("evaluation result := {:?}", result);
     }
 }
