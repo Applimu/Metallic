@@ -292,6 +292,7 @@ impl Val {
     }
 }
 
+/// A context where evaluation of an expression can take place.
 #[derive(Debug, Clone)]
 pub struct Context<'a> {
     globals: &'a [Rc<Expr>],

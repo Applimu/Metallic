@@ -2,14 +2,10 @@ use std::rc::Rc;
 
 use crate::{
     Atomic, Expr, Program, Type,
-    runtime::{Context, RuntimeError, Val, interpret},
+    runtime::{Context, RuntimeError},
 };
 
-// NOTE: I wrote this code before I realized that type checking with
-// a dependent language requires the ability for there to be free-variables.
-// Because of that, most of this code will likely need to be scrapped, but it's
-// still useful to keep around right now.
-
+/// An error that could occur during type checking
 #[derive(Debug)]
 pub enum CheckerError {
     TypesMismatch { expected: Type, found: Type },
@@ -24,6 +20,7 @@ impl From<RuntimeError> for CheckerError {
     }
 }
 
+/// A context for checking types
 pub struct CheckingContext<'a> {
     pub globals: &'a [Rc<Expr>],
     pub global_types: &'a [Rc<Expr>],
@@ -36,7 +33,8 @@ impl Atomic {
             Atomic::Local(i) => ctx.locals[*i].clone(),
             Atomic::Global(i) => {
                 let type_expr = ctx.global_types[*i].as_ref();
-                check_type(ctx, type_expr, &Type::Type);
+                // We assume that all types are well-formed types
+                // check_type(ctx, type_expr, &Type::Type);
                 let mut eval_ctx = Context::from_checking_ctx(ctx);
                 eval_ctx
                     .interpret(type_expr)
@@ -53,20 +51,8 @@ impl Atomic {
     }
 }
 
-// converts every type signature in to an actual Type
-pub fn check_wellformed_types(
-    globals: &[Rc<Expr>],
-    globals_types: &[Rc<Expr>],
-) -> Result<Vec<Rc<Type>>, RuntimeError> {
-    let mut types = Vec::new();
-    for type_expr in globals_types.iter() {
-        let type_sig = interpret(globals, &globals_types, type_expr.as_ref())?;
-        types.push(type_sig.get_as_type()?);
-    }
-
-    Ok(types)
-}
-
+/// Returns `Ok(())` if the types are definitionally equal, and otherwise returns
+/// `Err(CheckerError::TypesMismatch)`
 fn types_match(expect: &Type, found: &Type) -> Result<(), CheckerError> {
     if expect == found {
         Ok(())
@@ -78,7 +64,7 @@ fn types_match(expect: &Type, found: &Type) -> Result<(), CheckerError> {
     }
 }
 
-// Verifies that an expression has a certain type in a context
+/// Verifies that an expression has a certain type in a given context
 fn check_type(
     ctx: &mut CheckingContext,
     expr: &Expr,
@@ -90,6 +76,9 @@ fn check_type(
             // 1) infer type of func and then check arg's type and
             //     signature are equal to the type in func
             // 2) infer type of arg and then check func's type
+            // 3) infer both the func and arg and then verify everything
+
+            // Here we chose option 1
             match infer_type(ctx, func)?.as_ref() {
                 Type::FunctionType(input_type, output_type) => {
                     types_match(signature, output_type)?;
@@ -143,13 +132,14 @@ fn check_type(
             check_type(ctx, new_value, new_value_type.as_ref())?;
             ctx.locals.push(new_value_type.clone());
             check_type(ctx, expr, signature)?;
+            // This shouldn't panic unless the check_type can change the length of ctx.locals
             assert_eq!(ctx.locals.pop(), Some(new_value_type.clone()));
             Ok(())
         }
     }
 }
 
-// Guesses what the type of an expression is in a context
+/// Infers what the type of an expression is in a given context
 fn infer_type(ctx: &mut CheckingContext, expr: &Expr) -> Result<Rc<Type>, CheckerError> {
     match expr {
         Expr::Apply(func, arg) => match infer_type(ctx, func)?.as_ref() {
@@ -206,6 +196,9 @@ fn infer_type(ctx: &mut CheckingContext, expr: &Expr) -> Result<Rc<Type>, Checke
     }
 }
 
+/// Verifies that a program has no type errors
+/// In the future I may want to change it so that it adds type information onto
+/// every `Expr`
 pub fn type_check_program(prog: &Program) -> Result<(), CheckerError> {
     for type_expr in prog.global_types.iter() {
         let mut new_ctx = CheckingContext {
