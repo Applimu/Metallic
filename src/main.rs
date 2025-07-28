@@ -79,21 +79,29 @@ impl Type {
 // It's basically made for pairing names with their `runtime::Val`s
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum Internal {
-    IType,
-    IInt,
-    Iadd,
-    Ifun,
-    IUnit,
-    IDepProd,
-    ImkPair,
-    IPairType,
-    IBool,
-    Itrue,
-    Ifalse,
-    Ieq,
-    Iunit,
-    Igetln,
-    Iprintln,
+    IType,    // type of types
+    Ifun,     // curried function-type function on types
+    IDepProd, // the function that converts a A -> Type into a dependent product
+
+    IInt, // type of integers
+    Iadd, // curried add function on integers
+    Imul,
+    Isub,
+    Ieq, // integer boolean equality
+    Ile,
+
+    IUnit, // the type of the unit ()
+    Iunit, // the unit value
+
+    IPairType, // the type of pairs of elements
+    ImkPair,   // the function that makes a pair of elements
+
+    IBool,  // the type of the boolean domain
+    Itrue,  // true bool
+    Ifalse, // false bool
+
+    Igetln,   // IO action of getting a string
+    Iprintln, // IO action of printing a string
 }
 
 impl Internal {
@@ -101,7 +109,7 @@ impl Internal {
         match self {
             Internal::IType => Type::Type,
             Internal::IInt => Type::Type,
-            Internal::Iadd => Type::FunctionType(
+            Internal::Iadd | Internal::Imul | Internal::Isub => Type::FunctionType(
                 Rc::new(Type::Int),
                 Rc::new(Type::FunctionType(Rc::new(Type::Int), Rc::new(Type::Int))),
             ),
@@ -111,7 +119,12 @@ impl Internal {
             ),
             Internal::Iunit => Type::Unit,
             Internal::IUnit => Type::Type,
-            Internal::IDepProd => todo!("Implement DepProd's type"),
+            Internal::IDepProd => Type::DepProd {
+                family: Rc::new(Function::PartialApplication(
+                    FunctionConstant::TypeOfDepProd,
+                    Vec::new(),
+                )),
+            },
             // should be (Type: T) -> (T -> Type) -> Type
             Internal::ImkPair => Type::DepProd {
                 family: Rc::new(Function::PartialApplication(
@@ -124,9 +137,8 @@ impl Internal {
                 Rc::new(Type::FunctionType(Rc::new(Type::Type), Rc::new(Type::Type))),
             ),
             Internal::IBool => Type::Type,
-            Internal::Itrue => Type::Bool(),
-            Internal::Ifalse => Type::Bool(),
-            Internal::Ieq => Type::FunctionType(
+            Internal::Itrue | Internal::Ifalse => Type::Bool(),
+            Internal::Ieq | Internal::Ile => Type::FunctionType(
                 Rc::new(Type::Int),
                 Rc::new(Type::FunctionType(
                     Rc::new(Type::Int),
@@ -147,6 +159,18 @@ impl Internal {
             Internal::IInt => Val::Type(Rc::new(Type::Int)),
             Internal::Iadd => Val::Function(Function::PartialApplication(
                 FunctionConstant::Add,
+                Vec::new(),
+            )),
+            Internal::Imul => Val::Function(Function::PartialApplication(
+                FunctionConstant::Mul,
+                Vec::new(),
+            )),
+            Internal::Isub => Val::Function(Function::PartialApplication(
+                FunctionConstant::Sub,
+                Vec::new(),
+            )),
+            Internal::Ile => Val::Function(Function::PartialApplication(
+                FunctionConstant::IntLe,
                 Vec::new(),
             )),
             Internal::Ifun => Val::Function(Function::PartialApplication(
@@ -190,6 +214,9 @@ impl Internal {
             "Type" => Internal::IType,
             "Int" => Internal::IInt,
             "add" => Internal::Iadd,
+            "mul" => Internal::Imul,
+            "sub" => Internal::Isub,
+            "le" => Internal::Ile,
             "fun" => Internal::Ifun,
             "Unit" => Internal::IUnit,
             "DepProd" => Internal::IDepProd,
