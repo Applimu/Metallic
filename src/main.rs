@@ -5,7 +5,7 @@ use std::{collections::HashMap, env};
 
 use parsing::{Binding, Command, ParseError};
 use resolve::{ResolveError, UnresolvedExpr, resolve_exprs};
-use runtime::{Function, FunctionConstant, RuntimeError, Val, interpret};
+use runtime::{Function, FunctionConstant, RuntimeError, Val};
 use type_checking::{CheckerError, type_check_program};
 
 mod parsing;
@@ -15,36 +15,44 @@ mod runtime;
 mod tests;
 mod type_checking;
 
-// An atomic name in an expression
+/// An atomic value in an expression, a leaf of the AST
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Atomic {
-    // index reference to local variable
+    /// index reference to local variable
     Local(usize),
-    // reference to a value in the globals array
+    /// reference to a value in the globals array
     Global(usize),
-    // literal value
+    /// literal value
     Internal(Internal),
-    // EnumVariant("Ex", 5) is the 5th variant of the Ex enum
+    /// EnumVariant("Ex", 5) is the 5th variant of the Ex enum
     EnumVariant(String, usize),
+    /// An enum type literal, just represented as a string
     EnumType(String),
+    /// An integer literal
     IntLit(i64),
+    /// A string literal
     StringLit(String),
 }
 
-// an expression where each variable name has been resolved
+/// an expression where each variable name has been resolved
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
+    /// Application of a function to a value
     Apply(Rc<Expr>, Rc<Expr>),
+    /// A lambda expression
     Function {
         input_type: Rc<Expr>,
         output: Rc<Expr>,
     },
+    /// An atomic value in our expression
     Atom(Atomic),
+    /// A match statement which matches on an enum of a specific type
     Match {
         enum_name: String,
         matchend: Rc<Expr>,
         branches: Vec<Rc<Expr>>,
     },
+    /// A let expression with
     Let {
         new_value_type: Rc<Expr>,
         new_value: Rc<Expr>,
@@ -54,17 +62,22 @@ pub enum Expr {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Type {
+    /// The type of types, which doesn't have any universe levels or anything (yet?)
     Type,
     Int,
     String,
     Unit,
+    /// A Product type
     Pair(Rc<Type>, Rc<Type>),
+    /// An arrow type
     FunctionType(Rc<Type>, Rc<Type>),
     DepProd {
-        // this function should always return a Type
+        // this is an arrow function which should always return a type
         family: Rc<Function>,
     },
+    /// An enum type, represented by it's name
     Enum(String),
+    /// The IO type which represents a program that can be executed.
     IO,
 }
 
@@ -75,8 +88,8 @@ impl Type {
     }
 }
 
-// These are constant values that are defined internally
-// It's basically made for pairing names with their `runtime::Val`s
+/// These are constant values that are defined internally by the compiler
+/// It's made for pairing identifiers with their `runtime::Val`s
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum Internal {
     IType,
@@ -97,6 +110,7 @@ pub enum Internal {
 }
 
 impl Internal {
+    /// Constructs the `Type` of the provided `Internal` 
     fn get_type(&self) -> Type {
         match self {
             Internal::IType => Type::Type,
@@ -141,6 +155,7 @@ impl Internal {
         }
     }
 
+    /// Constructs the `Val` of the provided `Internal`
     pub fn val(&self) -> Val {
         match self {
             Internal::IType => Val::Type(Rc::new(Type::Type)),
@@ -206,9 +221,10 @@ impl Internal {
     }
 }
 
+/// A program where the names have not been resolved yet
+/// the first three fields of this struct should always
+/// have the same length.
 pub struct UnresolvedProgram {
-    // the first three fields of this struct should always
-    // have the same length.
     def_names: Vec<String>,
     def_types: Vec<UnresolvedExpr>,
     def_values: Vec<UnresolvedExpr>,
@@ -216,8 +232,7 @@ pub struct UnresolvedProgram {
     enums: HashMap<String, Vec<String>>,
 }
 
-// Unpacks the list of commands into the different types of commands.
-// first three arrays are always the same length
+/// Unpacks the list of commands into the different types of commands.
 pub fn separate_commands(commands: Vec<Command>) -> UnresolvedProgram {
     let mut def_names = Vec::new();
     let mut def_types = Vec::new();
@@ -263,6 +278,7 @@ pub enum GenericError<'a> {
     CheckerError(CheckerError),
 }
 
+/// A `Program` that can be interpreted by `runtime::interpret`
 pub struct Program {
     names: Vec<String>,
     globals: Vec<Rc<Expr>>,
@@ -271,6 +287,7 @@ pub struct Program {
     evals: Vec<Rc<Expr>>,
 }
 
+/// Big function that goes all the way for source code to final `Program`
 pub fn make_program<'a>(src: &'a str) -> Result<Program, GenericError<'a>> {
     // parsing
     let ast: Vec<Command> = parsing::parse_src(src).map_err(GenericError::ParseError)?;
@@ -323,7 +340,7 @@ pub fn main() {
     } = make_program(src.as_str()).expect("failed to compile program");
     println!("Interpretting program!");
     for e in evals {
-        let result = interpret(&globals, &global_types, &e);
+        let result = runtime::interpret(&globals, &global_types, &e);
         println!("evaluation result := {:?}", result);
     }
 }
