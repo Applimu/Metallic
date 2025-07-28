@@ -28,7 +28,6 @@ pub enum Token {
     Keyword(Keyword),
 }
 
-// TODO: add parsing strings
 // TODO: add a way to obtain line numbers for error messages
 #[derive(Debug, Clone)]
 pub struct Tokens<'a> {
@@ -303,6 +302,7 @@ where
             None => Ok(None),
         }
     }
+    /// Expect an identifier, and eat it, returning the identifier as a `String`. Returns `UnexpectedToken` otherwise
     fn expect_identifier(&mut self) -> Result<String, ParseError<'a>> {
         let next_token = self.get_next_token()?;
         if let Token::Identifier(str) = next_token {
@@ -312,6 +312,7 @@ where
         }
     }
 
+    /// Expect the provided keyword, and eat it. Returns `UnexpectedToken` otherwise
     fn expect_keyword(&mut self, kwd: Keyword) -> Result<(), ParseError<'a>> {
         let next_token = self.get_next_token()?;
         if next_token != Token::Keyword(kwd) {
@@ -321,41 +322,42 @@ where
         }
     }
 
+    /// Parses an expression. Returns the expression when it reaches an unexpected keyword
+    /// or when it parses all remaining tokens.
     pub fn parse_expr(&mut self) -> Result<UnresolvedExpr, ParseError<'a>> {
         let mut paren_stack: Vec<UnresolvedExpr> = Vec::new();
         let mut depth: u32 = 0;
-        loop {
-            match self.peek_next_token()? {
-                None => break,
-                Some(Token::Keyword(Keyword::Def)) => break,
-                Some(Token::Keyword(Keyword::Enum)) => break,
-                Some(Token::Keyword(Keyword::Eval)) => break,
-                Some(Token::Keyword(Keyword::Eq)) => break,
-                Some(Token::Keyword(Keyword::Case)) => break,
-                Some(Token::Keyword(Keyword::End)) => break,
-                Some(Token::Keyword(Keyword::Colon)) => break,
-                Some(Token::Keyword(Keyword::In)) => break,
-                Some(Token::Keyword(Keyword::Do)) => {
+        while let Some(tok) = self.peek_next_token()? {
+            match tok {
+                Token::Keyword(Keyword::Def) => break,
+                Token::Keyword(Keyword::Enum) => break,
+                Token::Keyword(Keyword::Eval) => break,
+                Token::Keyword(Keyword::Eq) => break,
+                Token::Keyword(Keyword::Case) => break,
+                Token::Keyword(Keyword::End) => break,
+                Token::Keyword(Keyword::Colon) => break,
+                Token::Keyword(Keyword::In) => break,
+                Token::Keyword(Keyword::Do) => {
                     return Err(ParseError::UnexpectedToken(Token::Keyword(Keyword::Do)));
                 }
-                Some(Token::Identifier(s)) => {
+                Token::Identifier(s) => {
                     push_as_arg(&mut paren_stack, UnresolvedExpr::Variable(s.clone()));
                     self.tokens.next(); // eat token
                 }
-                Some(Token::Number(n)) => {
+                Token::Number(n) => {
                     push_as_arg(&mut paren_stack, UnresolvedExpr::IntLit(*n));
                     self.tokens.next(); // eat token
                 }
-                Some(Token::Stringlit(s)) => {
+                Token::Stringlit(s) => {
                     push_as_arg(&mut paren_stack, UnresolvedExpr::StringLit(s.clone()));
                     self.tokens.next(); // eat token
                 }
-                Some(Token::ParenL) => {
+                Token::ParenL => {
                     depth += 1;
                     self.tokens.next(); // eat token
                     self.parse_inside_parens(&mut paren_stack, &mut depth)?;
                 }
-                Some(Token::ParenR) => {
+                Token::ParenR => {
                     if depth == 0 {
                         break;
                     };
@@ -364,7 +366,7 @@ where
                     let arg = paren_stack.pop().ok_or(ParseError::BadParenR)?;
                     push_as_arg(&mut paren_stack, arg);
                 }
-                Some(Token::Keyword(Keyword::Fn)) => {
+                Token::Keyword(Keyword::Fn) => {
                     self.tokens.next(); // eat token
                     let input_type = self.parse_expr()?;
                     self.expect_keyword(Keyword::Colon)?;
@@ -383,11 +385,11 @@ where
                         },
                     )
                 }
-                Some(Token::Keyword(Keyword::Match)) => {
+                Token::Keyword(Keyword::Match) => {
                     let match_statement = UnresolvedExpr::Match(self.parse_match()?);
                     push_as_arg(&mut paren_stack, match_statement)
                 }
-                Some(Token::Keyword(Keyword::Let)) => {
+                Token::Keyword(Keyword::Let) => {
                     self.tokens.next(); // eat let token
                     let binding = self.parse_binding()?;
 
@@ -412,7 +414,9 @@ where
         return Ok(final_expr);
     }
 
-    // parses parentheses until it is able to push something onto the paren_stack
+    /// Parses parentheses until it is able to push something onto the paren_stack, and
+    /// then returns with a depth equal to one greater. Also handles things like `()` and
+    /// Expects the caller to raise the depth by 1 before calling
     fn parse_inside_parens(
         &mut self,
         paren_stack: &mut Vec<UnresolvedExpr>,
@@ -464,7 +468,6 @@ where
         let type_sig: UnresolvedExpr = self.parse_expr()?;
 
         self.expect_keyword(Keyword::Colon)?;
-
         let name = self.expect_identifier()?;
         self.expect_keyword(Keyword::Eq)?;
 

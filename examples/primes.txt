@@ -1,0 +1,21 @@
+
+
+
+def fun Int (fun Int Int) : gcd := fn Int: x do
+	fn Int: y do
+	match eq x 0
+		case true do
+			y
+		case false do
+	match eq y 0
+		case true do
+			x
+		case false do
+	match lt x y
+		case true do
+			gcd x (sub y x)
+		case false do
+			gcd (sub x y) y
+	end
+	end
+	end
