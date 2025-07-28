@@ -95,11 +95,17 @@ impl Function {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FunctionConstant {
     Add,
+    Mul,
+    Sub,
+    IntEq,
+    IntLe,
+
     Fun,
     PairType,
-    IntEq,
+
     GetLn,
     PrintLn,
+
     TypeOfDepProd,      // fn Type: T do (T -> Type) -> Type
     OutputTypeOfMkPair, // fn Type: t1 do (Type: t2) -> t1 & t2
 
@@ -117,6 +123,26 @@ impl FunctionConstant {
                     let x = args[0].get_as_int()?;
                     let y = args[1].get_as_int()?;
                     Ok(Val::IntLit(x + y))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
+            FunctionConstant::Mul => {
+                if args.len() >= 2 {
+                    assert!(args.len() == 2);
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Ok(Val::IntLit(x * y))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
+            FunctionConstant::Sub => {
+                if args.len() >= 2 {
+                    assert!(args.len() == 2);
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Ok(Val::IntLit(x - y))
                 } else {
                     Ok(Val::Function(Function::PartialApplication(self, args)))
                 }
@@ -147,6 +173,16 @@ impl FunctionConstant {
                     let x = args[0].get_as_int()?;
                     let y = args[1].get_as_int()?;
                     Ok(Val::Enum("Bool".to_owned(), if x == y { 1 } else { 0 }))
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
+            FunctionConstant::IntLe => {
+                if args.len() >= 2 {
+                    assert!(args.len() == 2);
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Ok(Val::Enum("Bool".to_owned(), if x <= y { 1 } else { 0 }))
                 } else {
                     Ok(Val::Function(Function::PartialApplication(self, args)))
                 }
@@ -182,14 +218,23 @@ impl FunctionConstant {
                     Ok(Val::Function(Function::PartialApplication(self, args)))
                 }
             }
-            FunctionConstant::OutputTypeOfMkPair => todo!(),
+            FunctionConstant::OutputTypeOfMkPair => {
+                if args.len() >= 1 {
+                    assert!(args.len() == 1);
+                    let t = args[0].get_as_type()?;
+                    todo!();
+                } else {
+                    Ok(Val::Function(Function::PartialApplication(self, args)))
+                }
+            }
             FunctionConstant::DepProd => {
                 if args.len() >= 2 {
                     assert!(args.len() == 2);
                     let t = args[0].get_as_type()?;
                     let f = args[1].get_as_fn()?;
-                    todo!("Allow DepProd to accept any function");
-                    // Ok(Val::Type(Rc::new(Type::DepProd { family: f })))
+                    Ok(Val::Type(Rc::new(Type::DepProd {
+                        family: Rc::new(f.clone()),
+                    })))
                 } else {
                     Ok(Val::Function(Function::PartialApplication(self, args)))
                 }

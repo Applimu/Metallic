@@ -92,24 +92,31 @@ impl Type {
 /// It's made for pairing identifiers with their `runtime::Val`s
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum Internal {
-    IType,
-    IInt,
-    Iadd,
-    IString,
-    Ifun,
-    IUnit,
-    IDepProd,
-    ImkPair,
-    IPairType,
-    IBool,
-    Itrue,
-    Ifalse,
-    Ieq,
+    IType,    // type of types
+    Ifun,     // curried function-type function on types
+    IDepProd, // the function that converts a A -> Type into a dependent product
+
+    IInt, // type of integers
+    Iadd, // curried add function on integers
+    Imul,
+    Isub,
+    Ieq, // integer boolean equality
     Igt,
     Ilt,
-    Iunit,
-    Igetln,
-    Iprintln,
+
+    IUnit, // the type of the unit ()
+    Iunit, // the unit value
+
+    IPairType, // the type of pairs of elements
+    ImkPair,   // the function that makes a pair of elements
+
+    IBool,  // the type of the boolean domain
+    IString,
+    Itrue,  // true bool
+    Ifalse, // false bool
+
+    Igetln,   // IO action of getting a string
+    Iprintln, // IO action of printing a string
 }
 
 impl Internal {
@@ -119,16 +126,21 @@ impl Internal {
         use crate::Type::{FunctionType, Int, DepProd, Unit, String, IO};
         match self {
             IType | IInt | IString | IUnit | IBool => Type::Type,
-            Iadd => FunctionType(
-                Rc::new(Int),
-                Rc::new(FunctionType(Rc::new(Int), Rc::new(Int))),
+            Internal::Iadd | Internal::Imul | Internal::Isub => Type::FunctionType(
+                Rc::new(Type::Int),
+                Rc::new(Type::FunctionType(Rc::new(Type::Int), Rc::new(Type::Int))),
             ),
             Ifun => FunctionType(
                 Rc::new(Type::Type),
                 Rc::new(FunctionType(Rc::new(Type::Type), Rc::new(Type::Type))),
             ),
-            Iunit => Unit,
-            IDepProd => todo!("Implement DepProd's type"),
+            Iunit => Type::Unit,
+            Internal::IDepProd => Type::DepProd {
+                family: Rc::new(Function::PartialApplication(
+                    FunctionConstant::TypeOfDepProd,
+                    Vec::new(),
+                )),
+            },
             // should be (Type: T) -> (T -> Type) -> Type
             ImkPair => DepProd {
                 family: Rc::new(Function::PartialApplication(
@@ -163,9 +175,17 @@ impl Internal {
             Internal::IType => Val::Type(Rc::new(Type::Type)),
             Internal::IInt => Val::Type(Rc::new(Type::Int)),
             Internal::Iadd => Val::Function(Function::PartialApplication(
-                                FunctionConstant::Add,
-                                Vec::new(),
-                            )),
+                FunctionConstant::Add,
+                Vec::new(),
+            )),
+            Internal::Imul => Val::Function(Function::PartialApplication(
+                FunctionConstant::Mul,
+                Vec::new(),
+            )),
+            Internal::Isub => Val::Function(Function::PartialApplication(
+                FunctionConstant::Sub,
+                Vec::new(),
+            )),
             Internal::Ifun => Val::Function(Function::PartialApplication(
                                 FunctionConstant::Fun,
                                 Vec::new(),
@@ -212,6 +232,8 @@ impl Internal {
             "String" => Internal::IString,
             "Bool" => Internal::IBool,
             "add" => Internal::Iadd,
+            "mul" => Internal::Imul,
+            "sub" => Internal::Isub,
             "fun" => Internal::Ifun,
             "Unit" => Internal::IUnit,
             "DepProd" => Internal::IDepProd,
