@@ -1,13 +1,14 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    Atomic, Expr, Internal, Program, Type, interpret, make_program,
+    Atomic, Expr, Internal, Program, Type, make_program,
     parsing::{
         Binding, Command, Keyword, Matching, ParseError, Token, parse, tokenize, tokenize_number,
     },
     resolve::UnresolvedExpr,
     runtime::Val,
 };
+use crate::runtime::interpret;
 
 #[test]
 fn test_tokenize_number() {
