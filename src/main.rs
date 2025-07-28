@@ -220,8 +220,8 @@ impl Internal {
                                 Vec::new(),
                             )),
             Internal::IString => Val::Type(Rc::new(Type::String)),
-            Internal::Igt => todo!(),
-            Internal::Ilt => todo!(),
+            Internal::Ilt => Val::Function(Function::PartialApplication(FunctionConstant::IntLt, Vec::new())),
+            Internal::Igt => Val::Function(Function::PartialApplication(FunctionConstant::IntGt, Vec::new())),
         }
     }
 
