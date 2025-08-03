@@ -26,9 +26,9 @@ pub enum Token {
     Stringlit(String),
     Number(i64),
     Keyword(Keyword),
+    Operator(Operator),
 }
 
-// TODO: add parsing strings
 // TODO: add a way to obtain line numbers for error messages
 #[derive(Debug, Clone)]
 pub struct Tokens<'a> {
@@ -89,22 +89,44 @@ pub fn tokenize_number<'a>(numbers: &'a str) -> (Result<Token, ParseError<'a>>, 
     )
 }
 
-fn try_as_keyword<'a>(kwd: &'a str) -> Option<Keyword> {
-    match kwd {
-        "def" => Some(Keyword::Def),
-        "eval" => Some(Keyword::Eval),
-        "enum" => Some(Keyword::Enum),
-        "fn" => Some(Keyword::Fn),
-        "let" => Some(Keyword::Let),
-        "in" => Some(Keyword::In),
-        "match" => Some(Keyword::Match),
-        "case" => Some(Keyword::Case),
-        "end" => Some(Keyword::End),
-        "do" => Some(Keyword::Do),
-        ":=" => Some(Keyword::Eq),
-        ":" => Some(Keyword::Colon),
-        _ => None,
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Operator(String);
+
+/// Returns `true` iff the character is to be interpretted as part of an operator
+fn is_operator_char(c: char) -> bool {
+    match c {
+        '+' | '-' | '<' | '>' | '=' | '!' => true,
+        _ => false,
     }
+}
+/// Returns the string as an `Operator` if the language considers it to be an operator
+fn try_as_operator(op: String) -> Option<Operator> {
+    if op.len() == 0 {
+        return None;
+    };
+    if op.chars().all(|c| is_operator_char(c)) {
+        Some(Operator(String::from(op)))
+    } else {
+        None
+    }
+}
+
+fn try_as_keyword<'a>(kwd: &'a str) -> Option<Keyword> {
+    Some(match kwd {
+        "def" => Keyword::Def,
+        "eval" => Keyword::Eval,
+        "enum" => Keyword::Enum,
+        "fn" => Keyword::Fn,
+        "let" => Keyword::Let,
+        "in" => Keyword::In,
+        "match" => Keyword::Match,
+        "case" => Keyword::Case,
+        "end" => Keyword::End,
+        "do" => Keyword::Do,
+        ":=" => Keyword::Eq,
+        ":" => Keyword::Colon,
+        _ => return None,
+    })
 }
 
 impl<'a> Iterator for Tokens<'a> {
@@ -121,7 +143,7 @@ impl<'a> Iterator for Tokens<'a> {
             let last_idx = self.next_to_read.len() - 1;
             assert_eq!("\"", &self.next_to_read[last_idx..last_idx + 1]);
             if last_idx == 0 {
-                panic!("String has no closing parentheses");
+                panic!("String has no closing quotation");
             }
             let new_str = if last_idx == 1 {
                 String::new()
@@ -171,8 +193,10 @@ impl<'a> Iterator for Tokens<'a> {
 }
 
 impl<'a> Tokens<'a> {
-    // returns the next chunk of code without any whitespace
-    // skips over comments and whitespace, and returns strings separately.
+    /// Returns the next chunk of code without any whitespace
+    /// skips over any comments and whitespace, and returns strings separately.
+    /// There technically *can* be whitespace in the result, but this is only if the returned
+    /// value is a string. Returns `None` if there is nothing more to return
     fn next_nowhitespace_substr(&mut self) -> Option<&'a str> {
         if self.src.len() == 0 {
             return None;
@@ -324,38 +348,39 @@ where
     pub fn parse_expr(&mut self) -> Result<UnresolvedExpr, ParseError<'a>> {
         let mut paren_stack: Vec<UnresolvedExpr> = Vec::new();
         let mut depth: u32 = 0;
-        loop {
-            match self.peek_next_token()? {
-                None => break,
-                Some(Token::Keyword(Keyword::Def)) => break,
-                Some(Token::Keyword(Keyword::Enum)) => break,
-                Some(Token::Keyword(Keyword::Eval)) => break,
-                Some(Token::Keyword(Keyword::Eq)) => break,
-                Some(Token::Keyword(Keyword::Case)) => break,
-                Some(Token::Keyword(Keyword::End)) => break,
-                Some(Token::Keyword(Keyword::Colon)) => break,
-                Some(Token::Keyword(Keyword::In)) => break,
-                Some(Token::Keyword(Keyword::Do)) => {
-                    return Err(ParseError::UnexpectedToken(Token::Keyword(Keyword::Do)));
+        while let Some(tok) = self.peek_next_token()? {
+            use Keyword::*;
+            match tok {
+                Token::Keyword(Def) => break,
+                Token::Keyword(Enum) => break,
+                Token::Keyword(Eval) => break,
+                Token::Keyword(Eq) => break,
+                Token::Keyword(Case) => break,
+                Token::Keyword(End) => break,
+                Token::Keyword(Colon) => break,
+                Token::Keyword(In) => break,
+                Token::Keyword(Do) => {
+                    return Err(ParseError::UnexpectedToken(Token::Keyword(Do)));
                 }
-                Some(Token::Identifier(s)) => {
+                Token::Identifier(s) => {
                     push_as_arg(&mut paren_stack, UnresolvedExpr::Variable(s.clone()));
                     self.tokens.next(); // eat token
                 }
-                Some(Token::Number(n)) => {
+                Token::Number(n) => {
                     push_as_arg(&mut paren_stack, UnresolvedExpr::IntLit(*n));
                     self.tokens.next(); // eat token
                 }
-                Some(Token::Stringlit(s)) => {
+                Token::Stringlit(s) => {
                     push_as_arg(&mut paren_stack, UnresolvedExpr::StringLit(s.clone()));
                     self.tokens.next(); // eat token
                 }
-                Some(Token::ParenL) => {
+                Token::Operator(op) => todo!("OPERATORS!"),
+                Token::ParenL => {
                     depth += 1;
                     self.tokens.next(); // eat token
                     self.parse_inside_parens(&mut paren_stack, &mut depth)?;
                 }
-                Some(Token::ParenR) => {
+                Token::ParenR => {
                     if depth == 0 {
                         break;
                     };
@@ -364,7 +389,7 @@ where
                     let arg = paren_stack.pop().ok_or(ParseError::BadParenR)?;
                     push_as_arg(&mut paren_stack, arg);
                 }
-                Some(Token::Keyword(Keyword::Fn)) => {
+                Token::Keyword(Keyword::Fn) => {
                     self.tokens.next(); // eat token
                     let input_type = self.parse_expr()?;
                     self.expect_keyword(Keyword::Colon)?;
@@ -383,11 +408,11 @@ where
                         },
                     )
                 }
-                Some(Token::Keyword(Keyword::Match)) => {
+                Token::Keyword(Keyword::Match) => {
                     let match_statement = UnresolvedExpr::Match(self.parse_match()?);
                     push_as_arg(&mut paren_stack, match_statement)
                 }
-                Some(Token::Keyword(Keyword::Let)) => {
+                Token::Keyword(Keyword::Let) => {
                     self.tokens.next(); // eat let token
                     let binding = self.parse_binding()?;
 
