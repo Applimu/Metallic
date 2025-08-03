@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{
     Atomic, Expr, Program, Type,
-    runtime::{Context, RuntimeError, Val, interpret},
+    runtime::{Context, RuntimeError, interpret},
 };
 
 // NOTE: I wrote this code before I realized that type checking with
@@ -60,7 +60,7 @@ pub fn check_wellformed_types(
 ) -> Result<Vec<Rc<Type>>, RuntimeError> {
     let mut types = Vec::new();
     for type_expr in globals_types.iter() {
-        let type_sig = interpret(globals, &globals_types, type_expr.as_ref())?;
+        let type_sig = interpret(globals, &globals_types, &[], type_expr.as_ref())?;
         types.push(type_sig.get_as_type()?);
     }
 
@@ -219,7 +219,7 @@ pub fn type_check_program(prog: &Program) -> Result<(), CheckerError> {
 
     for i in 0..prog.globals.len() {
         let global = &prog.globals[i];
-        let mut eval_ctx = Context::new(&prog.globals, &prog.global_types);
+        let mut eval_ctx = Context::new(&prog.globals, &prog.global_types, &[]);
         let global_type = eval_ctx
             .interpret(&prog.global_types[i])
             .unwrap()

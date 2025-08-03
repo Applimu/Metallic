@@ -1,4 +1,6 @@
+use std::fmt::Display;
 use std::rc::Rc;
+use std::str::FromStr;
 
 use crate::type_checking::CheckingContext;
 use crate::{Atomic, Expr, Type};
@@ -79,6 +81,7 @@ impl Function {
                 let mut new_ctx = Context {
                     globals: ctx.globals,
                     globals_types: ctx.globals_types,
+                    globals_names: ctx.globals_names,
                     // I *believe* that there are never free variables when closures are captured??
                     free_locals: Vec::new(),
                     bound_locals: new_locals,
@@ -341,6 +344,7 @@ impl Val {
 pub struct Context<'a> {
     globals: &'a [Rc<Expr>],
     globals_types: &'a [Rc<Expr>],
+    globals_names: &'a [String],
     // Only local variables can ever be free variables, so debrujin
     // indices work fine here
     free_locals: Vec<Rc<Type>>,
@@ -348,10 +352,15 @@ pub struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    pub const fn new(globals: &'a [Rc<Expr>], globals_types: &'a [Rc<Expr>]) -> Self {
+    pub const fn new(
+        globals: &'a [Rc<Expr>],
+        globals_types: &'a [Rc<Expr>],
+        globals_names: &'a [String],
+    ) -> Self {
         Self {
             globals,
             globals_types,
+            globals_names,
             free_locals: Vec::new(),
             bound_locals: Vec::new(),
         }
@@ -367,6 +376,7 @@ impl<'a> Context<'a> {
         Self {
             globals,
             globals_types: global_types,
+            globals_names: &[],
             free_locals: locals.clone(),
             bound_locals: Vec::new(),
         }
@@ -385,7 +395,8 @@ impl<'a> Context<'a> {
             Atomic::Local(i) => Ok(self.get_local(i).clone()),
             Atomic::Global(i) => {
                 // keeping current context isn't necessary for this
-                let mut context = Context::new(self.globals, self.globals_types);
+                let mut context =
+                    Context::new(self.globals, self.globals_types, self.globals_names);
                 context.interpret(self.globals[*i].as_ref())
             }
             Atomic::IntLit(n) => Ok(Rc::new(Val::IntLit(*n))),
@@ -398,7 +409,99 @@ impl<'a> Context<'a> {
         }
     }
 
+    fn display_atom(&self, atom: &Atomic) -> String {
+        match atom {
+            Atomic::Local(i) => format!("(Local #{})", i),
+            Atomic::Global(i) => {
+                if self.globals_names.len() != 0 {
+                    self.globals_names[*i].clone()
+                } else {
+                    format!("(Global #{})", i)
+                }
+            }
+            Atomic::Internal(internal) => format!("{:?}", internal),
+            Atomic::EnumVariant(enum_type, i) => format!("Variant #{} of {}", i, enum_type),
+            Atomic::EnumType(s) => s.clone(),
+            Atomic::IntLit(n) => format!("{}", n),
+            Atomic::StringLit(s) => format!("\"{}\"", s),
+        }
+    }
+
+    fn display_expr(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::Apply(expr, expr1) => {
+                format!("({} {})", self.display_expr(expr), self.display_expr(expr1))
+            }
+            Expr::Function { input_type, output } => format!(
+                "fn {} do {}",
+                self.display_expr(input_type),
+                self.display_expr(output)
+            ),
+            Expr::Atom(atomic) => self.display_atom(atomic),
+            Expr::Match {
+                enum_name,
+                matchend,
+                branches,
+            } => {
+                format!(
+                    "match {} : {} {{...}}",
+                    enum_name,
+                    self.display_expr(matchend)
+                )
+            }
+            Expr::Let {
+                new_value_type,
+                new_value,
+                expr,
+            } => format!(
+                "let {} := {} in {}",
+                self.display_expr(new_value_type),
+                self.display_expr(new_value),
+                self.display_expr(expr),
+            ),
+        }
+    }
+
+    fn display_val(&self, val: &Val) -> String {
+        match val {
+            Val::IntLit(n) => format!("{}", n),
+            Val::StringLit(s) => format!("\"{}\"", s),
+            Val::Unit => String::from_str("()").unwrap(),
+            Val::Pair(_, _, val1, val2) => {
+                format!("({}, {})", self.display_val(val1), self.display_val(val2))
+            }
+            Val::Function(Function::PartialApplication(f_const, vals)) => {
+                let mut str = format!("{:?}", f_const);
+                for val in vals.iter() {
+                    str += " ";
+                    str += &self.display_val(val)
+                }
+                str
+            }
+            Val::Function(Function::Closure {
+                captured_vars: _,
+                code: _,
+            }) => {
+                format!("[Closure]")
+            }
+            Val::Type(t) => {
+                format!("{:?}", t)
+            }
+            Val::Enum(enum_type, i) => format!("{}::{}", enum_type, i),
+            Val::IO(_ioaction) => format!("[IO Action]"),
+            Val::FreeVariable(i) => format!("(Free var #{})", i),
+        }
+    }
+
     pub fn interpret(&mut self, to_eval: &Expr) -> Result<Rc<Val>, RuntimeError> {
+        // println!(
+        //     "\tinterpret {}:: {}",
+        //     self.bound_locals
+        //         .iter()
+        //         .map(|v| self.display_val(v) + ", ")
+        //         .collect::<String>(),
+        //     self.display_expr(to_eval)
+        // );
         match to_eval {
             Expr::Apply(func, arg) => {
                 let f: Rc<Val> = self.interpret(func)?;
@@ -446,9 +549,11 @@ impl<'a> Context<'a> {
 pub fn interpret(
     globals: &[Rc<Expr>],
     globals_types: &[Rc<Expr>],
+    globals_names: &[String],
     expr: &Expr,
 ) -> Result<Rc<Val>, RuntimeError> {
-    let mut ctx = Context::new(globals, globals_types);
+    let mut ctx = Context::new(globals, globals_types, globals_names);
+    println!("\n\nNOW EVALUATING: {}", ctx.display_expr(expr));
     let res = ctx.interpret(expr);
     assert!(ctx.free_locals.len() == 0);
     assert!(ctx.bound_locals.len() == 0);

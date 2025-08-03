@@ -118,7 +118,7 @@ pub enum Internal {
 }
 
 impl Internal {
-    /// Constructs the `Type` of the provided `Internal` 
+    /// Constructs the `Type` of the provided `Internal`
     fn get_type(&self) -> Type {
         match self {
             Internal::IType => Type::Type,
@@ -360,14 +360,16 @@ pub fn main() {
         .expect("Something went wrong when reading the file :/");
 
     let Program {
-        names: _,
+        names: names,
         globals,
         global_types,
         evals,
     } = make_program(src.as_str()).expect("failed to compile program");
     println!("Interpretting program!");
     for e in evals {
-        let result = runtime::interpret(&globals, &global_types, &e);
-        println!("evaluation result := {:?}", result);
+        match runtime::interpret(&globals, &global_types, &names, &e) {
+            Ok(result) => println!("evaluation result: {:?}", result),
+            Err(error) => println!("evaluation error: {:?}", error),
+        }
     }
 }
