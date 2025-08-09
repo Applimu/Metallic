@@ -9,8 +9,8 @@ def fun Int (fun Int (fun Int Int)) : fib_helper :=
 		case false do fib_helper b (add a b) (add i -1)
 	end
 
-
-def fun Int Int: five := fn Int: eight do "five"
+// Uncomment this to see a type error!
+// def fun Int Int: five := fn Int: eight do "five"
 
 def fun Int Int : fib := fib_helper 1 0
 

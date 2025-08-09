@@ -1,7 +1,7 @@
 # Metallic!
 
 Metallic is a dependently typed, functional programming language with strict evaluation, made mainly as a sandbox to test various ideas that I have about programming language design. 
-It is currently VERY WIP and not really ready for coding even small things in it yet. The language is currently named metallic but like everything this is subject to change once the language gets more of an identity.
+It is currently VERY WIP and not ready for coding even small things in it yet. The language is currently named metallic but like everything this is subject to change once the language gets more of an identity.
 If you want to try it out, first clone the repository and run `cargo test`. Then run the examples using `cargo run .\fib.txt`, and finally try writing your own code :3!
 
 Here is a rundown of almost everything in metallic:
@@ -63,16 +63,21 @@ This feature
 ### Pairs
 TODO: explain pairs (tuples)
 
+# ""The Philosophy""
+The basic philosophy of this language is that "Verification is data." For example if you have a function that
+verifies that asks whether a number `n` is even or odd, it should return the "witness" `m` with a proof that `2 * m = n`,
+or alternatively it should return a witness `m` to the fact that `n` is odd with proof that `2 * m + 1 = n`. <br>
+What separates this from other programming languages with dependent types is that I do not plan on adding a type of
+propositions like `Prop` in lean. Instead, we can instead think of propositions as *data* which is stored in the double-negation
+monad `DoubleNegation T = (T → Empty) → Empty`.
+
 # Important features NOT yet implemented
 - Operators (e.g. `+`, `*`, `->`, etc.). Applying functions is currently the only way to do computation.
 - Integer comparison operations
 - Type Checking. Currently the expressions in the type field are just straight up ignored. It's been a struggle to learn how to do this with dependent types but I now understand to be able to do it once I get to it.
 - The `Empty` type, which will be a type that expresses the idea of not returning any value (through either exiting the program or looping forever).
-  - I also am currently toying with the idea of a function `((T -> Empty) -> Empty) -> T: dne`, which stands for Double negation elimination. This function would make the logic of metallic's type system a classical logic rather than an intuitionistic one. It would have an immensely inefficient implementation but I believe it's possible, lmk if you want to know more about it.
 - Dependent sum types.
 - if statements
-- Input/Output. The plan for input/output is for it to be a kind of continuation-passing style thing. For example we would have `(String -> IO) -> IO: getln` as the type of a function that reads a line from standard input
-- C code generation. This is eventually going to be a compiled language and not just interpreted. This feature will need both type checking and IO to be added before I can start working on it though. <br>
-I specifically chose C because I didn't want to have to deal with learning C++ and doing FFI with LLVM or using some other commonly used IR out there that doesn't have very much documentation. And also languages like Haskell and Lean output to C as well.
+- C code generation. This is eventually going to be a compiled language and not just interpreted. <br>
 - Line/column number for errors, along with better error messages
-- It's not really not implemented, but I do need to add more tests for everything.
+- It's not really not implemented, but I do need to add more tests for everything. (Especially error cases)
