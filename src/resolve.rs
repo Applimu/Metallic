@@ -5,8 +5,15 @@ use std::{
 
 use crate::{
     Atomic, Expr, Internal,
-    parsing::{Binding, Matching},
+    parsing::{Binding, Matching, Operator},
 };
+
+pub(crate) const OPERATOR_TABLE: [(&str, Internal, usize); 4] = [
+    ("+", Internal::Iadd, 5),
+    ("-", Internal::Isub, 5),
+    ("*", Internal::Imul, 10),
+    ("->", Internal::Ifun, 1),
+];
 
 //TODO: create a better error message
 #[derive(Debug)]
@@ -14,11 +21,13 @@ pub enum ResolveError {
     UnknownName(String),
     NotALocalVariable(String),
     UnknownSetOfVariants(HashSet<String>),
+    UnknownOperator(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnresolvedExpr {
     Apply(Box<UnresolvedExpr>, Box<UnresolvedExpr>),
+    Operator(Box<UnresolvedExpr>, Operator, Box<UnresolvedExpr>),
     Function {
         name: String,
         input_type: Box<UnresolvedExpr>,
@@ -45,6 +54,26 @@ fn resolve_expr(
             let rfunc = Rc::new(resolve_expr(global_names, local_names, case_groups, *func)?);
             let rarg = Rc::new(resolve_expr(global_names, local_names, case_groups, *arg)?);
             Ok(Expr::Apply(rfunc, rarg))
+        }
+        UnresolvedExpr::Operator(left, Operator(op_name), right) => {
+            let left = resolve_expr(global_names, local_names, case_groups, *left)?;
+            let right = resolve_expr(global_names, local_names, case_groups, *right)?;
+            let mut maybe_op_fn: Option<Internal> = None;
+            for (s, fun, _) in OPERATOR_TABLE {
+                if s == op_name {
+                    maybe_op_fn = Some(fun);
+                    break;
+                }
+            }
+            let Some(op_fn) = maybe_op_fn else {
+                return Err(ResolveError::UnknownOperator(op_name));
+            };
+            let op_expr = Expr::Atom(Atomic::Internal(op_fn));
+
+            Ok(Expr::Apply(
+                Rc::new(Expr::Apply(Rc::new(op_expr), Rc::new(left))),
+                Rc::new(right),
+            ))
         }
         UnresolvedExpr::Function {
             name,

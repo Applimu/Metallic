@@ -48,6 +48,8 @@ pub enum ParseError<'a> {
     // honestly this probably falls more under a resolve error
     // than a parse error
     CaseNameCollision(String),
+    NoRHS(Operator),
+    MultipleOperators(Operator, Operator),
 }
 
 // turns a sequence of numeric characters into an integer
@@ -90,17 +92,17 @@ pub fn tokenize_number<'a>(numbers: &'a str) -> (Result<Token, ParseError<'a>>, 
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Operator(String);
+pub(crate) struct Operator(pub(crate) String);
 
 /// Returns `true` iff the character is to be interpretted as part of an operator
 fn is_operator_char(c: char) -> bool {
     match c {
-        '+' | '-' | '<' | '>' | '=' | '!' => true,
+        '+' | '-' | '<' | '>' | '=' | '!' | '*' => true,
         _ => false,
     }
 }
 /// Returns the string as an `Operator` if the language considers it to be an operator
-fn try_as_operator(op: String) -> Option<Operator> {
+fn try_as_operator(op: &str) -> Option<Operator> {
     if op.len() == 0 {
         return None;
     };
@@ -138,6 +140,7 @@ impl<'a> Iterator for Tokens<'a> {
         while self.next_to_read.len() == 0 {
             self.next_to_read = self.next_nowhitespace_substr()?;
         }
+        println!("PROCESSING: \"{}\"", self.next_to_read);
 
         if &self.next_to_read[0..1] == "\"" {
             let last_idx = self.next_to_read.len() - 1;
@@ -158,6 +161,11 @@ impl<'a> Iterator for Tokens<'a> {
         if let Some(kwd) = try_as_keyword(&self.next_to_read) {
             self.next_to_read = "";
             return Some(Ok(Token::Keyword(kwd)));
+        }
+
+        if let Some(o) = try_as_operator(self.next_to_read) {
+            self.next_to_read = "";
+            return Some(Ok(Token::Operator(o)));
         }
 
         let first_char: char = self.next_to_read.chars().next().unwrap();
@@ -298,18 +306,21 @@ where
     type Item = Result<Command, ParseError<'a>>;
 
     fn next(&mut self) -> Option<Result<Command, ParseError<'a>>> {
-        match self.parse_command() {
-            Err(ParseError::UnexpectedEOF) => None,
-            otherwise => Some(otherwise),
-        }
+        self.parse_command()
     }
 }
 
 // helper function for Parser::parse_expr and Parser::parse_inside_parens.
-fn push_as_arg(paren_stack: &mut Vec<UnresolvedExpr>, arg: UnresolvedExpr) {
+fn push_as_arg(paren_stack: &mut Vec<(UnresolvedExpr, Option<Operator>)>, arg: UnresolvedExpr) {
     match paren_stack.pop() {
-        Some(e) => paren_stack.push(UnresolvedExpr::Apply(Box::new(e), Box::new(arg))),
-        None => paren_stack.push(arg),
+        Some((e, None)) => {
+            paren_stack.push((UnresolvedExpr::Apply(Box::new(e), Box::new(arg)), None))
+        }
+        Some((e, Some(o))) => paren_stack.push((
+            UnresolvedExpr::Operator(Box::new(e), o, Box::new(arg)),
+            None,
+        )),
+        None => paren_stack.push((arg, None)),
     }
 }
 
@@ -346,7 +357,7 @@ where
     }
 
     pub fn parse_expr(&mut self) -> Result<UnresolvedExpr, ParseError<'a>> {
-        let mut paren_stack: Vec<UnresolvedExpr> = Vec::new();
+        let mut paren_stack: Vec<(UnresolvedExpr, Option<Operator>)> = Vec::new();
         let mut depth: u32 = 0;
         while let Some(tok) = self.peek_next_token()? {
             use Keyword::*;
@@ -374,7 +385,20 @@ where
                     push_as_arg(&mut paren_stack, UnresolvedExpr::StringLit(s.clone()));
                     self.tokens.next(); // eat token
                 }
-                Token::Operator(op) => todo!("OPERATORS!"),
+                Token::Operator(op) => {
+                    let (v, mb_op) = paren_stack
+                        .last_mut()
+                        .expect("Found prefix operator unexpectedly");
+                    match mb_op {
+                        None => {
+                            *mb_op = Some(op.clone());
+                        }
+                        Some(op2) => {
+                            return Err(ParseError::MultipleOperators(op.clone(), op2.clone()));
+                        }
+                    }
+                    self.tokens.next(); // eat token
+                }
                 Token::ParenL => {
                     depth += 1;
                     self.tokens.next(); // eat token
@@ -386,7 +410,7 @@ where
                     };
                     depth -= 1;
                     self.tokens.next(); // eat this token
-                    let arg = paren_stack.pop().ok_or(ParseError::BadParenR)?;
+                    let (arg, op) = paren_stack.pop().ok_or(ParseError::BadParenR)?;
                     push_as_arg(&mut paren_stack, arg);
                 }
                 Token::Keyword(Keyword::Fn) => {
@@ -429,29 +453,41 @@ where
         // I think this technically allows for expressions like `f (2 (5 4`
         // which I think is okay because you know what is meant by this and
         // closing parentheses is often a nightmare
-        let mut final_expr = paren_stack.pop().ok_or(ParseError::EmptyExpression)?;
-        while let Some(expr) = paren_stack.pop() {
-            final_expr = UnresolvedExpr::Apply(Box::new(expr), Box::new(final_expr));
+        let (mut final_expr, op) = paren_stack.pop().ok_or(ParseError::EmptyExpression)?;
+        match op {
+            Some(op) => return Err(ParseError::NoRHS(op)),
+            None => (),
+        }
+
+        while let Some((expr, mb_op)) = paren_stack.pop() {
+            match mb_op {
+                Some(_) => panic!("Dont know how to resolve operators like this :/"),
+                None => {
+                    final_expr = UnresolvedExpr::Apply(Box::new(expr), Box::new(final_expr));
+                }
+            }
         }
 
         return Ok(final_expr);
     }
 
-    // parses parentheses until it is able to push something onto the paren_stack
+    /// parses parentheses until it is able to push something onto the paren_stack
+    /// Panics if the running depth is not 0, as this must be called immediately after
+    /// an open parenthesis
     fn parse_inside_parens(
         &mut self,
-        paren_stack: &mut Vec<UnresolvedExpr>,
+        paren_stack: &mut Vec<(UnresolvedExpr, Option<Operator>)>,
         depth: &mut u32,
     ) -> Result<(), ParseError<'a>> {
         assert!(*depth != 0);
         loop {
             match self.get_next_token()? {
                 Token::Identifier(s) => {
-                    paren_stack.push(UnresolvedExpr::Variable(s));
+                    paren_stack.push((UnresolvedExpr::Variable(s), None));
                     break;
                 }
                 Token::Number(n) => {
-                    paren_stack.push(UnresolvedExpr::IntLit(n));
+                    paren_stack.push((UnresolvedExpr::IntLit(n), None));
                     break;
                 }
                 Token::ParenL => {
@@ -472,11 +508,14 @@ where
                     self.expect_keyword(Keyword::Do)?;
 
                     let output = self.parse_expr()?;
-                    paren_stack.push(UnresolvedExpr::Function {
-                        name,
-                        input_type: Box::new(input_type),
-                        output: Box::new(output),
-                    });
+                    paren_stack.push((
+                        UnresolvedExpr::Function {
+                            name,
+                            input_type: Box::new(input_type),
+                            output: Box::new(output),
+                        },
+                        None,
+                    ));
                     break;
                 }
                 bad_token => return Err(ParseError::UnexpectedToken(bad_token)),
@@ -539,20 +578,23 @@ where
         Ok((name, variants))
     }
 
-    fn parse_command(&mut self) -> Result<Command, ParseError<'a>> {
+    fn parse_command(&mut self) -> Option<Result<Command, ParseError<'a>>> {
         // the first word always says what kind of command it is
         let Some(next_token_res) = self.tokens.next() else {
-            return Err(ParseError::UnexpectedEOF);
+            return None;
         };
-        match next_token_res? {
+        let token = match next_token_res {
+            Ok(t) => t,
+            Err(e) => return Some(Err(e)),
+        };
+        Some(match token {
             Token::Keyword(Keyword::Def) => self.parse_binding().map(Command::Definition),
             Token::Keyword(Keyword::Eval) => self.parse_expr().map(Command::Eval),
-            Token::Keyword(Keyword::Enum) => match self.parse_enum() {
-                Ok((name, variants)) => Ok(Command::Enum(name, variants)),
-                Err(e) => Err(e),
-            },
+            Token::Keyword(Keyword::Enum) => self
+                .parse_enum()
+                .map(|(name, variants)| Command::Enum(name, variants)),
             t => Err(ParseError::UnexpectedToken(t)),
-        }
+        })
     }
 }
 
@@ -568,9 +610,13 @@ where
 pub fn parse_src<'a>(src: &'a str) -> Result<Vec<Command>, ParseError<'a>> {
     let mut tokens = tokenize(&src);
 
-    let mut commands = Vec::new();
-    for command in parse(&mut tokens) {
-        commands.push(command?)
-    }
-    Ok(commands)
+    let res: Result<Vec<_>, _> = parse(&mut tokens).collect();
+    // At this point we have either eaten all the source code or we have arrived at an error
+    assert!(
+        tokens.src.len() == 0 || res.is_err(),
+        "TOKENS SOURCE: \n{}\n\nAST CREATED:\n{:?}",
+        tokens.src,
+        res
+    );
+    return res;
 }
