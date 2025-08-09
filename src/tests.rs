@@ -3,11 +3,10 @@ use std::{collections::HashMap, rc::Rc};
 use crate::runtime::{interpret, interpret_program};
 use crate::{
     Atomic, Expr, Internal, Program, Type, make_program,
-    parsing::{
-        Binding, Command, Keyword, Matching, ParseError, Token, parse, tokenize, tokenize_number,
-    },
+    parsing::{Binding, Command, Keyword, Matching, ParseError, parse},
     resolve::UnresolvedExpr,
     runtime::Val,
+    tokenize::{Token, tokenize, tokenize_number},
 };
 
 #[test]
