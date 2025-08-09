@@ -138,7 +138,13 @@ impl<'a> Iterator for Tokens<'a> {
     // to show that we have eaten the input and actually parsed it
     fn next(&mut self) -> Option<Result<Token, ParseError<'a>>> {
         while self.next_to_read.len() == 0 {
-            self.next_to_read = self.next_nowhitespace_substr()?;
+            self.next_to_read = match self.next_nowhitespace_substr() {
+                None => {
+                    self.src = "";
+                    return None;
+                }
+                Some(s) => s,
+            };
         }
         println!("PROCESSING: \"{}\"", self.next_to_read);
 
@@ -578,6 +584,8 @@ where
         Ok((name, variants))
     }
 
+    /// Attempts to parse a command. If there are no more tokens to parse
+    /// it instead returns `None`
     fn parse_command(&mut self) -> Option<Result<Command, ParseError<'a>>> {
         // the first word always says what kind of command it is
         let Some(next_token_res) = self.tokens.next() else {
@@ -614,7 +622,8 @@ pub fn parse_src<'a>(src: &'a str) -> Result<Vec<Command>, ParseError<'a>> {
     // At this point we have either eaten all the source code or we have arrived at an error
     assert!(
         tokens.src.len() == 0 || res.is_err(),
-        "TOKENS SOURCE: \n{}\n\nAST CREATED:\n{:?}",
+        "TOKENS SOURCE (length {}): \n{}\n\nAST CREATED:\n{:?}",
+        tokens.src.len(),
         tokens.src,
         res
     );
