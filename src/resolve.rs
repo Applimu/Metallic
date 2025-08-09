@@ -5,7 +5,8 @@ use std::{
 
 use crate::{
     Atomic, Expr, Internal,
-    parsing::{Binding, Matching, Operator},
+    parsing::{Binding, Matching},
+    tokenize::Operator,
 };
 
 pub(crate) const OPERATOR_TABLE: [(&str, Internal, usize); 4] = [

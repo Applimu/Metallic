@@ -13,6 +13,7 @@ mod resolve;
 mod runtime;
 #[cfg(test)]
 mod tests;
+mod tokenize;
 mod type_checking;
 
 /// An atomic value in an expression, a leaf of the AST
@@ -123,7 +124,7 @@ pub enum Internal {
 impl Internal {
     /// Constructs the `Type` of the provided `Internal`
     fn get_type(&self) -> Type {
-        use crate::Type::{DepProd, FunctionType, IO, Int, String, Unit};
+        use crate::Type::{DepProd, FunctionType, IO, Int, String};
         use Internal::*;
         match self {
             IType | IInt | IString | IUnit | IBool => Type::Type,
@@ -159,18 +160,11 @@ impl Internal {
                 Rc::new(Int),
                 Rc::new(FunctionType(Rc::new(Int), Rc::new(Type::Bool()))),
             ),
-            Internal::Igetln => FunctionType(
+            Igetln => FunctionType(
                 Rc::new(FunctionType(Rc::new(String), Rc::new(IO))),
                 Rc::new(IO),
             ),
-            Internal::Iprintln => FunctionType(Rc::new(String), Rc::new(IO)),
-            IDepProd => todo!(),
-            Iadd | Imul | Isub => FunctionType(
-                Rc::new(Int),
-                Rc::new(FunctionType(Rc::new(Int), Rc::new(Int))),
-            ),
-            Igetln => todo!(),
-            Iprintln => todo!(),
+            Iprintln => FunctionType(Rc::new(String), Rc::new(IO)),
         }
     }
 
@@ -373,7 +367,7 @@ pub fn main() {
         .expect("Something went wrong when reading the file :/");
 
     let Program {
-        names: names,
+        names,
         globals,
         global_types,
         evals,
