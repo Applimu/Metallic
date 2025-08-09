@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 
 use crate::type_checking::CheckingContext;
-use crate::{Atomic, Expr, Type};
+use crate::{Atomic, Expr, Program, Type};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Val {
@@ -22,7 +22,7 @@ pub enum Val {
 }
 
 // TODO: create better error messages
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
     TypeError { expected: Type, found: Val },
     NotAFunction { value: Val },
@@ -559,4 +559,17 @@ pub fn interpret(
     assert!(ctx.free_locals.len() == 0);
     assert!(ctx.bound_locals.len() == 0);
     res
+}
+
+pub fn interpret_program(prog: &Program) -> Vec<Result<Rc<Val>, RuntimeError>> {
+    let mut results = Vec::new();
+    for to_eval in prog.evals.iter() {
+        results.push(interpret(
+            &prog.globals,
+            &prog.global_types,
+            &prog.names,
+            to_eval,
+        ));
+    }
+    return results;
 }

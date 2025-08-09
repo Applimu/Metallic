@@ -110,20 +110,21 @@ pub enum Internal {
     IPairType, // the type of pairs of elements
     ImkPair,   // the function that makes a pair of elements
 
-    IBool,  // the type of the boolean domain
+    IBool, // the type of the boolean domain
     IString,
     Itrue,  // true bool
     Ifalse, // false bool
 
-    Igetln,   // IO action of getting a string
-    Iprintln, // IO action of printing a string
+    Igetln, // IO action of getting a string
+    Iprintln,
+    Ile, // IO action of printing a string
 }
 
 impl Internal {
     /// Constructs the `Type` of the provided `Internal`
     fn get_type(&self) -> Type {
+        use crate::Type::{DepProd, FunctionType, IO, Int, String, Unit};
         use Internal::*;
-        use crate::Type::{FunctionType, Int, DepProd, Unit, String, IO};
         match self {
             IType | IInt | IString | IUnit | IBool => Type::Type,
             Internal::Iadd | Internal::Imul | Internal::Isub => Type::FunctionType(
@@ -154,18 +155,22 @@ impl Internal {
             ),
             Itrue => Type::Bool(),
             Ifalse => Type::Bool(),
-            Ieq | Igt | Ilt => FunctionType(
+            Ieq | Igt | Ilt | Ile => FunctionType(
                 Rc::new(Int),
-                Rc::new(FunctionType(
-                    Rc::new(Int),
-                    Rc::new(Type::Bool()),
-                )),
+                Rc::new(FunctionType(Rc::new(Int), Rc::new(Type::Bool()))),
             ),
             Internal::Igetln => FunctionType(
                 Rc::new(FunctionType(Rc::new(String), Rc::new(IO))),
                 Rc::new(IO),
             ),
             Internal::Iprintln => FunctionType(Rc::new(String), Rc::new(IO)),
+            IDepProd => todo!(),
+            Iadd | Imul | Isub => FunctionType(
+                Rc::new(Int),
+                Rc::new(FunctionType(Rc::new(Int), Rc::new(Int))),
+            ),
+            Igetln => todo!(),
+            Iprintln => todo!(),
         }
     }
 
@@ -187,41 +192,45 @@ impl Internal {
                 Vec::new(),
             )),
             Internal::Ifun => Val::Function(Function::PartialApplication(
-                                FunctionConstant::Fun,
-                                Vec::new(),
-                            )),
+                FunctionConstant::Fun,
+                Vec::new(),
+            )),
             Internal::Iunit => Val::Unit,
             Internal::IUnit => Val::Type(Rc::new(Type::Unit)),
             Internal::IDepProd => Val::Function(Function::PartialApplication(
-                                FunctionConstant::DepProd,
-                                Vec::new(),
-                            )),
+                FunctionConstant::DepProd,
+                Vec::new(),
+            )),
             Internal::ImkPair => Val::Function(Function::PartialApplication(
-                                FunctionConstant::Pair,
-                                Vec::new(),
-                            )),
+                FunctionConstant::Pair,
+                Vec::new(),
+            )),
             Internal::IPairType => Val::Function(Function::PartialApplication(
-                                FunctionConstant::PairType,
-                                Vec::new(),
-                            )),
+                FunctionConstant::PairType,
+                Vec::new(),
+            )),
             Internal::IBool => Val::Type(Rc::new(Type::Bool())),
             Internal::Itrue => Val::Enum("Bool".to_owned(), 1),
             Internal::Ifalse => Val::Enum("Bool".to_owned(), 0),
             Internal::Ieq => Val::Function(Function::PartialApplication(
-                                FunctionConstant::IntEq,
-                                Vec::new(),
-                            )),
+                FunctionConstant::IntEq,
+                Vec::new(),
+            )),
             Internal::Igetln => Val::Function(Function::PartialApplication(
-                                FunctionConstant::GetLn,
-                                Vec::new(),
-                            )),
+                FunctionConstant::GetLn,
+                Vec::new(),
+            )),
             Internal::Iprintln => Val::Function(Function::PartialApplication(
-                                FunctionConstant::PrintLn,
-                                Vec::new(),
-                            )),
+                FunctionConstant::PrintLn,
+                Vec::new(),
+            )),
             Internal::IString => Val::Type(Rc::new(Type::String)),
             Internal::Igt => todo!(),
             Internal::Ilt => todo!(),
+            Internal::Ile => Val::Function(Function::PartialApplication(
+                FunctionConstant::IntLe,
+                Vec::new(),
+            )),
         }
     }
 
@@ -244,6 +253,7 @@ impl Internal {
             "eq" => Internal::Ieq,
             "gt" => Internal::Igt,
             "lt" => Internal::Ilt,
+            "le" => Internal::Ile,
             "getln" => Internal::Igetln,
             "println" => Internal::Iprintln,
             _ => return None,
