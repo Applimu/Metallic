@@ -582,12 +582,8 @@ fn test_interpret3() {
     assert!(prog.evals.len() == 1);
     dbg!(&prog.evals[0]);
     let expected: Val = Val::Pair(
-        Rc::new(Type::Int),
-        Rc::new(Type::Pair(Rc::new(Type::Unit), Rc::new(Type::Int))),
         Rc::new(Val::IntLit(6)),
         Rc::new(Val::Pair(
-            Rc::new(Type::Unit),
-            Rc::new(Type::Int),
             Rc::new(Val::Unit),
             Rc::new(Val::IntLit(-1700)),
         )),
