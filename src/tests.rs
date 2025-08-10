@@ -1,13 +1,15 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::runtime::{interpret, interpret_program};
 use crate::{
     Atomic, Expr, Internal, Program, Type, make_program,
     parsing::{
-        Binding, Command, Keyword, Matching, ParseError, Token, parse, tokenize, tokenize_number,
+        Binding, Command, Keyword, Matching, ParseError, parse,
+    },
+    tokenize::{
+        Token, tokenize, tokenize_number
     },
     resolve::UnresolvedExpr,
-    runtime::Val,
+    runtime::{Val, interpret, interpret_program},
 };
 
 #[test]
