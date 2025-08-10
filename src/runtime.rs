@@ -1,4 +1,3 @@
-use std::fmt::Display;
 use std::rc::Rc;
 use std::str::FromStr;
 
@@ -11,8 +10,7 @@ pub enum Val {
     StringLit(String),
     // the unit value, not to be confused with Type::Unit
     Unit,
-    // Pair (t1, t2, x,y) has t1: x, t2: y
-    Pair(Rc<Type>, Rc<Type>, Rc<Val>, Rc<Val>),
+    Pair(Rc<Val>, Rc<Val>),
     Function(Function),
     Type(Rc<Type>),
     Enum(String, usize),
@@ -21,7 +19,7 @@ pub enum Val {
     FreeVariable(usize),
 }
 
-// TODO: create better error messages
+//TODO: create better error messages
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
     TypeError { expected: Type, found: Val },
@@ -89,7 +87,7 @@ impl Function {
                 new_ctx.interpret(code)
             }
             Function::PartialApplication(function_constant, args) => {
-                function_constant.reduce(args.clone(), arg).map(Rc::new)
+                function_constant.reduce(args.clone(), arg.as_ref()).map(Rc::new)
             }
         }
     }
@@ -142,9 +140,9 @@ impl FunctionConstant {
             FunctionConstant::Pair => 4,
         }
     }
-    fn reduce(self, args: Vec<Val>, arg: Rc<Val>) -> Result<Val, RuntimeError> {
+    fn reduce(self, args: Vec<Val>, arg: &Val) -> Result<Val, RuntimeError> {
         // args is a new vector which is [args.., arg]
-        let args : Vec<&Val> = Vec::from_iter(args.iter().chain(Some(arg.as_ref())));
+        let args : Vec<&Val> = Vec::from_iter(args.iter().chain(Some(arg)));
         if args.len() >= self.args() {
             assert!(args.len() == self.args());
             
@@ -200,7 +198,7 @@ impl FunctionConstant {
                                     }
                 FunctionConstant::PrintLn => {
                                             let x = args[0].get_as_string()?;
-                                            Val::IO(IOAction::PrintLn(x))
+                                            Val::IO(IOAction::PrintLn(x.clone()))
                                     }
                 FunctionConstant::TypeOfDepProd => {
                                             let x = args[0].get_as_type()?;
@@ -222,11 +220,11 @@ impl FunctionConstant {
                                             }))
                                     }
                 FunctionConstant::Pair => {
-                                            let left_type = args[0].get_as_type()?;
-                                            let right_type = args[1].get_as_type()?;
+                                            let _left_type = args[0].get_as_type()?;
+                                            let _right_type = args[1].get_as_type()?;
                                             let left = Rc::new(args[2].clone());
                                             let right = Rc::new(args[3].clone());
-                                            Val::Pair(left_type, right_type, left, right)
+                                            Val::Pair(left, right)
                                     }
                 FunctionConstant::Seq => {
                     let first = args[0].get_as_io()?;
@@ -251,9 +249,9 @@ impl Val {
         }
     }
 
-    pub fn get_as_string(&self) -> Result<String, RuntimeError> {
+    pub fn get_as_string(&self) -> Result<&String, RuntimeError> {
         match self {
-            Val::StringLit(s) => Ok(s.clone()),
+            Val::StringLit(s) => Ok(s),
             _ => Err(RuntimeError::TypeError {
                 expected: Type::String,
                 found: self.clone(),
@@ -294,7 +292,7 @@ impl Val {
 
     fn get_as_pair(&self) -> Result<(Rc<Val>, Rc<Val>), RuntimeError> {
         match self {
-            Val::Pair(_, _, x, y) => Ok((x.clone(), y.clone())),
+            Val::Pair(x, y) => Ok((x.clone(), y.clone())),
             _ => Err(RuntimeError::NotAPair(self.clone())),
         }
     }
@@ -307,7 +305,7 @@ impl Val {
             Val::IntLit(_) => Type::Int,
             Val::StringLit(_) => Type::String,
             Val::Unit => Type::Unit,
-            Val::Pair(t1, t2, _, _) => Type::Pair(t1.clone(), t2.clone()),
+            Val::Pair(val1, val2) => Type::Pair(val1.get_type(ctx).clone(), val2.get_type(ctx).clone()),
             Val::Function(Function::Closure {
                 captured_vars: _,
                 code: _,
@@ -451,7 +449,7 @@ impl<'a> Context<'a> {
             Val::IntLit(n) => format!("{}", n),
             Val::StringLit(s) => format!("\"{}\"", s),
             Val::Unit => String::from_str("()").unwrap(),
-            Val::Pair(_, _, val1, val2) => {
+            Val::Pair(val1, val2) => {
                 format!("({}, {})", self.display_val(val1), self.display_val(val2))
             }
             Val::Function(Function::PartialApplication(f_const, vals)) => {
