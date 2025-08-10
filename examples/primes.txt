@@ -1,47 +1,53 @@
 
-def fun Int (fun Int Int) : gcd := fn Int: x do
-	fn Int: y do
-	match eq x 0
-		case true do
-			y
+def fun Int (fun Int Int): gcd := fn Int: n do
+	fn Int: m do
+	match le n m
+		case true do // n <= m
+			match eq n 0
+				case true do m
+				case false do gcd n (sub m n)
+			end
 		case false do
-	match eq y 0
-		case true do
-			x
-		case false do
-	match lt x y
-		case true do
-			gcd x (sub y x)
-		case false do
-			gcd (sub x y) y
-	end
-	end
+			gcd m n
 	end
 
-
-eval gcd 12 14
-eval gcd 12 120
-eval gcd 27 9
-eval gcd 28 9
-
-def fun Int (fun Int Bool): is_prime_helper := fn Int: p do fn Int: i do
-	match eq p (mul i i)
-		case true do false
+def fun Int (fun Int Bool): is_coprime := fn Int: n do
+	fn Int: m do
+	eq (gcd n m) 1
+	
+def fun Int (fun Int Bool): is_prime_helper := fn Int: i do
+	fn Int: p do
+	match (le p (mul i i))
+		case true do true
 		case false do
-	match gt p (mul i i)
-		case true do 
-			match eq (gcd p i) 1
+			match is_coprime i p
 				case true do
-					is_prime_helper p (add i 1)
+					is_prime_helper (add i 1) p
 				case false do
 					false
 			end
-		case false do
-			true
-	end
 	end
 
-def fun Int Bool : is_prime := fn Int: p do is_prime_helper p 1
-	
+def fun Int Bool: is_prime :=
+	 fn Int: p do is_prime_helper 1 p
 
-eval is_prime 211
+
+eval is_prime 01
+eval is_prime 02
+eval is_prime 03
+eval is_prime 04
+eval is_prime 05
+eval is_prime 06
+eval is_prime 07
+eval is_prime 08
+eval is_prime 09
+eval is_prime 10
+eval is_prime 11
+eval is_prime 12
+eval is_prime 13
+eval is_prime 14
+eval is_prime 15
+eval is_prime 16
+eval is_prime 17
+def Int: this := add 1 (add 2 3)
+eval this

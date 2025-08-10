@@ -212,7 +212,7 @@ pub fn type_check_program(prog: &Program) -> Result<(), CheckerError> {
 
     for i in 0..prog.globals.len() {
         let global = &prog.globals[i];
-        let mut eval_ctx = Context::new(&prog.globals, &prog.global_types);
+        let mut eval_ctx = Context::new(&prog.globals, &prog.global_types, &[]);
         let global_type = eval_ctx
             .interpret(&prog.global_types[i])
             .unwrap()

@@ -103,6 +103,7 @@ pub enum Internal {
     Ieq, // integer boolean equality
     Igt,
     Ilt,
+    Ile,
 
     IUnit, // the type of the unit ()
     Iunit, // the unit value
@@ -110,7 +111,7 @@ pub enum Internal {
     IPairType, // the type of pairs of elements
     ImkPair,   // the function that makes a pair of elements
 
-    IBool,  // the type of the boolean domain
+    IBool, // the type of the boolean domain
     IString,
     Itrue,  // true bool
     Ifalse, // false bool
@@ -122,10 +123,10 @@ pub enum Internal {
 }
 
 impl Internal {
-    /// Constructs the `Type` of the provided `Internal` 
+    /// Constructs the `Type` of the provided `Internal`
     fn get_type(&self) -> Type {
+        use crate::Type::{DepProd, FunctionType, IO, Int, String, Unit};
         use Internal::*;
-        use crate::Type::{FunctionType, Int, DepProd, Unit, String, IO};
         match self {
             IType | IInt | IString | IUnit | IBool => Type::Type,
             Iadd | Imul | Isub => Type::FunctionType(
@@ -155,13 +156,6 @@ impl Internal {
                     ),
             Itrue => Type::Bool(),
             Ifalse => Type::Bool(),
-            Ieq | Igt | Ilt => FunctionType(
-                        Rc::new(Int),
-                        Rc::new(FunctionType(
-                            Rc::new(Int),
-                            Rc::new(Type::Bool()),
-                        )),
-                    ),
             Igetln => FunctionType(
                         Rc::new(FunctionType(Rc::new(String), Rc::new(IO))),
                         Rc::new(IO),
@@ -169,6 +163,10 @@ impl Internal {
             Iprintln => FunctionType(Rc::new(String), Rc::new(IO)),
             ISeq => FunctionType(Rc::new(Type::IO), Rc::new(FunctionType(Rc::new(Type::IO), Rc::new(Type::IO)))),
             IDone => Type::IO,
+            Ieq | Igt | Ilt | Ile => FunctionType(
+                Rc::new(Int),
+                Rc::new(FunctionType(Rc::new(Int), Rc::new(Type::Bool()))),
+            ),
         }
     }
 
@@ -190,23 +188,23 @@ impl Internal {
                         Vec::new(),
                     )),
             Internal::Ifun => Val::Function(Function::PartialApplication(
-                                        FunctionConstant::Fun,
-                                        Vec::new(),
-                                    )),
+                FunctionConstant::Fun,
+                Vec::new(),
+            )),
             Internal::Iunit => Val::Unit,
             Internal::IUnit => Val::Type(Rc::new(Type::Unit)),
             Internal::IDepProd => Val::Function(Function::PartialApplication(
-                                        FunctionConstant::DepProd,
-                                        Vec::new(),
-                                    )),
+                FunctionConstant::DepProd,
+                Vec::new(),
+            )),
             Internal::ImkPair => Val::Function(Function::PartialApplication(
-                                        FunctionConstant::Pair,
-                                        Vec::new(),
-                                    )),
+                FunctionConstant::Pair,
+                Vec::new(),
+            )),
             Internal::IPairType => Val::Function(Function::PartialApplication(
-                                        FunctionConstant::PairType,
-                                        Vec::new(),
-                                    )),
+                FunctionConstant::PairType,
+                Vec::new(),
+            )),
             Internal::IBool => Val::Type(Rc::new(Type::Bool())),
             Internal::Itrue => Val::Enum("Bool".to_owned(), 1),
             Internal::Ifalse => Val::Enum("Bool".to_owned(), 0),
@@ -225,6 +223,7 @@ impl Internal {
             Internal::IString => Val::Type(Rc::new(Type::String)),
             Internal::Ilt => Val::Function(Function::PartialApplication(FunctionConstant::IntLt, Vec::new())),
             Internal::Igt => Val::Function(Function::PartialApplication(FunctionConstant::IntGt, Vec::new())),
+            Internal::Ile => Val::Function(Function::PartialApplication(FunctionConstant::IntLe, Vec::new())),
             Internal::ISeq => Val::Function(Function::PartialApplication(FunctionConstant::Seq, Vec::new())),
             Internal::IDone => Val::IO(runtime::IOAction::Done),
         }
@@ -249,6 +248,7 @@ impl Internal {
             "eq" => Internal::Ieq,
             "gt" => Internal::Igt,
             "lt" => Internal::Ilt,
+            "le" => Internal::Ile,
             "getln" => Internal::Igetln,
             "println" => Internal::Iprintln,
             "seq" => Internal::ISeq,
@@ -370,16 +370,16 @@ pub fn main() {
         .expect("Something went wrong when reading the file :/");
 
     let Program {
-        names: _,
+        names: names,
         globals,
         global_types,
         evals,
     } = make_program(src.as_str()).expect("failed to compile program");
     println!("Interpretting program!");
     for e in evals {
-        match runtime::interpret(&globals, &global_types, &e) {
-            Ok(result) => println!("evaluation result := {:?}", result),
-            Err(e) => println!("Error: {:?}", e),
+        match runtime::interpret(&globals, &global_types, &names, &e) {
+            Ok(result) => println!("evaluation result: {:?}", result),
+            Err(error) => println!("evaluation error: {:?}", error),
         }
     }
 }
