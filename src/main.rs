@@ -73,9 +73,15 @@ pub enum Type {
     Pair(Rc<Type>, Rc<Type>),
     /// An arrow type
     FunctionType(Rc<Type>, Rc<Type>),
-    DepProd {
+    DepProdClosure {
         // this is an arrow function which should always return a type
-        family: Rc<Function<Expr>>,
+        captured_vals: Vec<Rc<Val>>,
+        code: Expr
+    },
+    DepProdPartialApp {
+        // this is an arrow function which should always return a type
+        fn_const: FunctionConstant,
+        args: Vec<Val>,
     },
     /// An enum type, represented by it's name
     Enum(String),
@@ -127,7 +133,7 @@ pub enum Internal {
 impl Internal {
     /// Constructs the `Type` of the provided `Internal`
     fn get_type(&self) -> Type {
-        use crate::Type::{DepProd, FunctionType, IO, Int, String};
+        use crate::Type::{FunctionType, IO, Int, String};
         use Internal::*;
         match self {
             IType | IInt | IString | IUnit | IBool => Type::Type,
@@ -140,17 +146,13 @@ impl Internal {
                 Rc::new(FunctionType(Rc::new(Type::Type), Rc::new(Type::Type))),
             ),
             Iunit => Type::Unit,
-            IDepProd => Type::DepProd {
-                family: Rc::new(Function::PartialApplication(
-                    FunctionConstant::TypeOfDepProd,
-                    Vec::new(),
-                )),
+            IDepProd => Type::DepProdPartialApp { 
+                fn_const: FunctionConstant::TypeOfDepProd,
+                args: Vec::new(),
             },
-            ImkPair => DepProd {
-                family: Rc::new(Function::PartialApplication(
-                    FunctionConstant::OutputTypeOfMkPair,
-                    Vec::new(),
-                )),
+            ImkPair => Type::DepProdPartialApp {
+                fn_const: FunctionConstant::OutputTypeOfMkPair,
+                args: Vec::new(),
             },
             IPairType => FunctionType(
                 Rc::new(Type::Type),
@@ -180,68 +182,68 @@ impl Internal {
         match self {
             Internal::IType => Val::Type(Rc::new(Type::Type)),
             Internal::IInt => Val::Type(Rc::new(Type::Int)),
-            Internal::Iadd => Val::Function(Function::PartialApplication(
+            Internal::Iadd => Val::PartialApplication(
                 FunctionConstant::Add,
                 Vec::new(),
-            )),
-            Internal::Imul => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Imul => Val::PartialApplication(
                 FunctionConstant::Mul,
                 Vec::new(),
-            )),
-            Internal::Isub => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Isub => Val::PartialApplication(
                 FunctionConstant::Sub,
                 Vec::new(),
-            )),
-            Internal::Ifun => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Ifun => Val::PartialApplication(
                 FunctionConstant::Fun,
                 Vec::new(),
-            )),
+            ),
             Internal::Iunit => Val::Unit,
             Internal::IUnit => Val::Type(Rc::new(Type::Unit)),
-            Internal::IDepProd => Val::Function(Function::PartialApplication(
+            Internal::IDepProd => Val::PartialApplication(
                 FunctionConstant::DepProd,
                 Vec::new(),
-            )),
-            Internal::ImkPair => Val::Function(Function::PartialApplication(
+            ),
+            Internal::ImkPair => Val::PartialApplication(
                 FunctionConstant::Pair,
                 Vec::new(),
-            )),
-            Internal::IPairType => Val::Function(Function::PartialApplication(
+            ),
+            Internal::IPairType => Val::PartialApplication(
                 FunctionConstant::PairType,
                 Vec::new(),
-            )),
+            ),
             Internal::IBool => Val::Type(Rc::new(Type::Bool())),
             Internal::Itrue => Val::Enum("Bool".to_owned(), 1),
             Internal::Ifalse => Val::Enum("Bool".to_owned(), 0),
-            Internal::Ieq => Val::Function(Function::PartialApplication(
+            Internal::Ieq => Val::PartialApplication(
                 FunctionConstant::IntEq,
                 Vec::new(),
-            )),
-            Internal::Igetln => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Igetln => Val::PartialApplication(
                 FunctionConstant::GetLn,
                 Vec::new(),
-            )),
-            Internal::Iprintln => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Iprintln => Val::PartialApplication(
                 FunctionConstant::PrintLn,
                 Vec::new(),
-            )),
+            ),
             Internal::IString => Val::Type(Rc::new(Type::String)),
-            Internal::Ilt => Val::Function(Function::PartialApplication(
+            Internal::Ilt => Val::PartialApplication(
                 FunctionConstant::IntLt,
                 Vec::new(),
-            )),
-            Internal::Igt => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Igt => Val::PartialApplication(
                 FunctionConstant::IntGt,
                 Vec::new(),
-            )),
-            Internal::Ile => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Ile => Val::PartialApplication(
                 FunctionConstant::IntLe,
                 Vec::new(),
-            )),
-            Internal::ISeq => Val::Function(Function::PartialApplication(
+            ),
+            Internal::ISeq => Val::PartialApplication(
                 FunctionConstant::Seq,
                 Vec::new(),
-            )),
+            ),
             Internal::IDone => Val::IO(runtime::IOAction::Done),
         }
     }

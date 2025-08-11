@@ -11,7 +11,6 @@ pub enum Val {
     // the unit value, not to be confused with Type::Unit
     Unit,
     Pair(Rc<Val>, Rc<Val>),
-    Function(Function<Expr>),
     Closure {
         captured_vars: Vec<Rc<Val>>,
         code: Rc<Expr>,
@@ -220,8 +219,9 @@ impl FunctionConstant {
                 FunctionConstant::DepProd => {
                                             let t = args[0].get_as_type()?;
                                             let f = args[1].get_as_fn()?;
-                                            Val::Type(Rc::new(Type::DepProd {
-                                                family: Rc::new(f.clone()),
+                                            Val::Type(Rc::new(match f {
+                                                Function::Closure { captured_vars, code } => Type::DepProdClosure { captured_vals: captured_vars, code: code.as_ref().clone() },
+                                                Function::PartialApplication(function_constant, vals) => Type::DepProdPartialApp { fn_const: function_constant, args: vals },
                                             }))
                                     }
                 FunctionConstant::Pair => {
@@ -238,7 +238,7 @@ impl FunctionConstant {
                 },
             })
         } else {
-            Ok(Val::Function(Function::PartialApplication(self, args.into_iter().map(Clone::clone).collect())))
+            Ok(Val::PartialApplication(self, args.into_iter().map(Clone::clone).collect()))
         }
     }
 }
@@ -278,7 +278,6 @@ impl Val {
     // the supplied argument
     pub fn get_as_fn(&self) -> Result<Function<Expr>, RuntimeError> {
         match self.clone() {
-            Val::Function(f) => Ok(f),
             Val::Closure { captured_vars, code } => Ok(Function::Closure { captured_vars, code }),
             Val::PartialApplication(fn_const, args) => Ok(Function::PartialApplication(fn_const, args)),
             yea => Err(RuntimeError::NotAFunction {
@@ -313,13 +312,6 @@ impl Val {
             Val::StringLit(_) => Type::String,
             Val::Unit => Type::Unit,
             Val::Pair(val1, val2) => Type::Pair(val1.get_type(ctx).clone(), val2.get_type(ctx).clone()),
-            Val::Function(Function::Closure {
-                        captured_vars: _,
-                        code: _,
-                    }) => todo!("getting types of closures not implemented :/"),
-            Val::Function(Function::PartialApplication(f, args)) => {
-                        todo!("getting type of partial application not implemented :(")
-                    }
             Val::Enum(enum_name, _) => Type::Enum(enum_name.clone()),
             Val::IO(_) => Type::IO,
             Val::FreeVariable(idx) => return ctx.free_locals[*idx].clone(),
@@ -461,7 +453,7 @@ impl<'a> Context<'a, Expr> {
             Val::Pair(val1, val2) => {
                         format!("({}, {})", self.display_val(val1), self.display_val(val2))
                     }
-            Val::Function(Function::PartialApplication(f_const, vals)) | Val::PartialApplication(f_const, vals)=> {
+            Val::PartialApplication(f_const, vals)=> {
                         let mut str = format!("{:?}", f_const);
                         for val in vals.iter() {
                             str += " ";
@@ -469,10 +461,7 @@ impl<'a> Context<'a, Expr> {
                         }
                         str
                     }
-            Val::Function(Function::Closure {
-                        captured_vars: _,
-                        code: _,
-                    }) | Val::Closure {
+            Val::Closure {
                         captured_vars: _,
                         code: _
                     }=> {
@@ -506,10 +495,10 @@ impl<'a> Context<'a, Expr> {
             Expr::Function {
                 input_type: _,
                 output,
-            } => Ok(Rc::new(Val::Function(Function::Closure {
+            } => Ok(Rc::new(Val::Closure {
                 captured_vars: self.bound_locals.clone(),
                 code: output.clone(),
-            }))),
+            })),
             Expr::Atom(a) => self.interpret_atom(a),
             Expr::Match {
                 enum_name,
