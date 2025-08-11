@@ -1,5 +1,9 @@
 
 
-def Int : a := add a 1
+//def Int : a := add a 1
 
-eval a
+eval mul 3 -4
+eval sub 1 1
+eval sub 90000 13
+eval le 3 4
+eval le -3 -4

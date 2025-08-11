@@ -2,14 +2,10 @@ use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     Atomic, Expr, Internal, Program, Type, make_program,
-    parsing::{
-        Binding, Command, Keyword, Matching, ParseError, parse,
-    },
-    tokenize::{
-        Token, tokenize, tokenize_number
-    },
+    parsing::{Binding, Command, Keyword, Matching, ParseError, parse},
     resolve::UnresolvedExpr,
     runtime::{Val, interpret, interpret_program},
+    tokenize::{Token, tokenize, tokenize_number},
 };
 
 #[test]
@@ -583,10 +579,7 @@ fn test_interpret3() {
     dbg!(&prog.evals[0]);
     let expected: Val = Val::Pair(
         Rc::new(Val::IntLit(6)),
-        Rc::new(Val::Pair(
-            Rc::new(Val::Unit),
-            Rc::new(Val::IntLit(-1700)),
-        )),
+        Rc::new(Val::Pair(Rc::new(Val::Unit), Rc::new(Val::IntLit(-1700)))),
     );
     assert_eq!(&interpret_program(&prog), &[Ok(Rc::new(expected))])
 }
