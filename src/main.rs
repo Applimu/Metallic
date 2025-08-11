@@ -15,6 +15,7 @@ mod runtime;
 mod tests;
 mod tokenize;
 mod type_checking;
+mod defuncd;
 
 /// An atomic value in an expression, a leaf of the AST
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +75,7 @@ pub enum Type {
     FunctionType(Rc<Type>, Rc<Type>),
     DepProd {
         // this is an arrow function which should always return a type
-        family: Rc<Function>,
+        family: Rc<Function<Expr>>,
     },
     /// An enum type, represented by it's name
     Enum(String),
@@ -171,11 +172,6 @@ impl Internal {
                 Rc::new(Int),
                 Rc::new(FunctionType(Rc::new(Int), Rc::new(Type::Bool()))),
             ),
-            Igetln => FunctionType(
-                Rc::new(FunctionType(Rc::new(String), Rc::new(IO))),
-                Rc::new(IO),
-            ),
-            Iprintln => FunctionType(Rc::new(String), Rc::new(IO)),
         }
     }
 

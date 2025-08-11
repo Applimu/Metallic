@@ -11,7 +11,12 @@ pub enum Val {
     // the unit value, not to be confused with Type::Unit
     Unit,
     Pair(Rc<Val>, Rc<Val>),
-    Function(Function),
+    Function(Function<Expr>),
+    Closure {
+        captured_vars: Vec<Rc<Val>>,
+        code: Rc<Expr>,
+    },
+    PartialApplication(FunctionConstant, Vec<Val>),
     Type(Rc<Type>),
     Enum(String, usize),
     IO(IOAction),
@@ -31,12 +36,12 @@ pub enum RuntimeError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IOAction {
     PrintLn(String),
-    GetLn(Function),
+    GetLn(Function<Expr>),
     Seq(Rc<IOAction>, Rc<IOAction>),
     Done,
 }
 
-fn run_io_action(ctx: &mut Context, action: &IOAction) -> Result<(), RuntimeError> {
+fn run_io_action(ctx: &mut Context<Expr>, action: &IOAction) -> Result<(), RuntimeError> {
     match action {
         IOAction::PrintLn(s) => {
             println!("{}", s);
@@ -57,16 +62,16 @@ fn run_io_action(ctx: &mut Context, action: &IOAction) -> Result<(), RuntimeErro
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Function {
+pub enum Function<CodeType> {
     Closure {
         captured_vars: Vec<Rc<Val>>,
-        code: Rc<Expr>,
+        code: Rc<CodeType>,
     },
     PartialApplication(FunctionConstant, Vec<Val>),
 }
 
-impl Function {
-    fn apply_to(&self, ctx: &mut Context, arg: Rc<Val>) -> Result<Rc<Val>, RuntimeError> {
+impl Function<Expr> {
+    fn apply_to(&self, ctx: &mut Context<Expr>, arg: Rc<Val>) -> Result<Rc<Val>, RuntimeError> {
         match self {
             Function::Closure {
                 captured_vars,
@@ -271,11 +276,13 @@ impl Val {
 
     // Unwraps this runtime value as a function, and then applies that function to
     // the supplied argument
-    pub fn get_as_fn(&self) -> Result<&Function, RuntimeError> {
-        match self {
+    pub fn get_as_fn(&self) -> Result<Function<Expr>, RuntimeError> {
+        match self.clone() {
             Val::Function(f) => Ok(f),
-            _ => Err(RuntimeError::NotAFunction {
-                value: self.clone(),
+            Val::Closure { captured_vars, code } => Ok(Function::Closure { captured_vars, code }),
+            Val::PartialApplication(fn_const, args) => Ok(Function::PartialApplication(fn_const, args)),
+            yea => Err(RuntimeError::NotAFunction {
+                value: yea,
             }),
         }
     }
@@ -299,7 +306,7 @@ impl Val {
 
     // Given a runtime value, obtains the type of the given value. This is different
     // from get_as_type which asserts that the given value is a type and unwraps it
-    pub fn get_type(&self, ctx: &Context) -> Rc<Type> {
+    pub fn get_type(&self, ctx: &Context<Expr>) -> Rc<Type> {
         Rc::new(match self {
             Val::Type(_) => Type::Type,
             Val::IntLit(_) => Type::Int,
@@ -307,24 +314,26 @@ impl Val {
             Val::Unit => Type::Unit,
             Val::Pair(val1, val2) => Type::Pair(val1.get_type(ctx).clone(), val2.get_type(ctx).clone()),
             Val::Function(Function::Closure {
-                captured_vars: _,
-                code: _,
-            }) => todo!("getting types of closures not implemented :/"),
+                        captured_vars: _,
+                        code: _,
+                    }) => todo!("getting types of closures not implemented :/"),
             Val::Function(Function::PartialApplication(f, args)) => {
-                todo!("getting type of partial application not implemented :(")
-            }
+                        todo!("getting type of partial application not implemented :(")
+                    }
             Val::Enum(enum_name, _) => Type::Enum(enum_name.clone()),
             Val::IO(_) => Type::IO,
             Val::FreeVariable(idx) => return ctx.free_locals[*idx].clone(),
+            Val::Closure { captured_vars, code } => todo!(),
+            Val::PartialApplication(function_constant, vals) => todo!(),
         })
     }
 }
 
 /// A context where evaluation of an expression can take place.
 #[derive(Debug, Clone)]
-pub struct Context<'a> {
-    globals: &'a [Rc<Expr>],
-    globals_types: &'a [Rc<Expr>],
+pub struct Context<'a, CodeType> {
+    globals: &'a [Rc<CodeType>],
+    globals_types: &'a [Rc<CodeType>],
     globals_names: &'a [String],
     // Only local variables can ever be free variables, so debrujin
     // indices work fine here
@@ -332,7 +341,7 @@ pub struct Context<'a> {
     bound_locals: Vec<Rc<Val>>,
 }
 
-impl<'a> Context<'a> {
+impl<'a> Context<'a, Expr> {
     pub const fn new(
         globals: &'a [Rc<Expr>],
         globals_types: &'a [Rc<Expr>],
@@ -450,25 +459,28 @@ impl<'a> Context<'a> {
             Val::StringLit(s) => format!("\"{}\"", s),
             Val::Unit => String::from_str("()").unwrap(),
             Val::Pair(val1, val2) => {
-                format!("({}, {})", self.display_val(val1), self.display_val(val2))
-            }
-            Val::Function(Function::PartialApplication(f_const, vals)) => {
-                let mut str = format!("{:?}", f_const);
-                for val in vals.iter() {
-                    str += " ";
-                    str += &self.display_val(val)
-                }
-                str
-            }
+                        format!("({}, {})", self.display_val(val1), self.display_val(val2))
+                    }
+            Val::Function(Function::PartialApplication(f_const, vals)) | Val::PartialApplication(f_const, vals)=> {
+                        let mut str = format!("{:?}", f_const);
+                        for val in vals.iter() {
+                            str += " ";
+                            str += &self.display_val(val)
+                        }
+                        str
+                    }
             Val::Function(Function::Closure {
-                captured_vars: _,
-                code: _,
-            }) => {
-                format!("[Closure]")
-            }
+                        captured_vars: _,
+                        code: _,
+                    }) | Val::Closure {
+                        captured_vars: _,
+                        code: _
+                    }=> {
+                        format!("[Closure]")
+                    }
             Val::Type(t) => {
-                format!("{:?}", t)
-            }
+                        format!("{:?}", t)
+                    }
             Val::Enum(enum_type, i) => format!("{}::{}", enum_type, i),
             Val::IO(_ioaction) => format!("[IO Action]"),
             Val::FreeVariable(i) => format!("(Free var #{})", i),
