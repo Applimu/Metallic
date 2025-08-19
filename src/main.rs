@@ -5,7 +5,7 @@ use std::{collections::HashMap, env};
 
 use parsing::{Binding, Command, ParseError};
 use resolve::{ResolveError, UnresolvedExpr, resolve_exprs};
-use runtime::{Function, FunctionConstant, RuntimeError, Val};
+use runtime::{FunctionConstant, RuntimeError, Val};
 use type_checking::{CheckerError, type_check_program};
 
 mod parsing;
@@ -335,6 +335,7 @@ pub enum GenericError<'a> {
 }
 
 /// A `Program` that can be interpreted by `runtime::interpret`
+#[derive(Debug)]
 pub struct Program {
     names: Vec<String>,
     globals: Vec<Rc<Expr>>,
