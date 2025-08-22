@@ -66,22 +66,27 @@ pub enum Expr {
 pub enum Type {
     /// The type of types, which doesn't have any universe levels or anything (yet?)
     Type,
+    /// The type of integers
     Int,
+    /// The type of string literals
     String,
+    /// The type of ()
     Unit,
     /// A Product type
     Pair(Rc<Type>, Rc<Type>),
     /// An arrow type
     FunctionType(Rc<Type>, Rc<Type>),
+    /// A dependent product over a closure function
     DepProdClosure {
         // this is an arrow function which should always return a type
         captured_vals: Vec<Rc<Val>>,
-        code: Expr
+        code: Rc<Expr>
     },
+    /// A dependent product over a `FunctionConstant`
     DepProdPartialApp {
         // this is an arrow function which should always return a type
         fn_const: FunctionConstant,
-        args: Vec<Val>,
+        args: Vec<Rc<Val>>,
     },
     /// An enum type, represented by it's name
     Enum(String),
@@ -118,6 +123,8 @@ pub enum Internal {
 
     IPairType, // the type of pairs of elements
     ImkPair,   // the function that makes a pair of elements
+    Ifirst,    // gets the first half of a pair
+    Isecond,   // gets the second half of a pair
 
     IBool, // the type of the boolean domain
     IString,
@@ -158,6 +165,8 @@ impl Internal {
                 Rc::new(Type::Type),
                 Rc::new(FunctionType(Rc::new(Type::Type), Rc::new(Type::Type))),
             ),
+            Ifirst => todo!(),
+            Isecond => todo!(),
             Itrue => Type::Bool(),
             Ifalse => Type::Bool(),
             Igetln => FunctionType(
@@ -212,6 +221,8 @@ impl Internal {
                 FunctionConstant::PairType,
                 Vec::new(),
             ),
+            Internal::Ifirst => todo!(),
+            Internal::Isecond => todo!(),
             Internal::IBool => Val::Type(Rc::new(Type::Bool())),
             Internal::Itrue => Val::Enum("Bool".to_owned(), 1),
             Internal::Ifalse => Val::Enum("Bool".to_owned(), 0),
@@ -262,6 +273,8 @@ impl Internal {
             "DepProd" => Internal::IDepProd,
             "pair" => Internal::ImkPair,
             "PairType" => Internal::IPairType,
+            "first" => Internal::Ifirst,
+            "second" => Internal::Isecond,
             "true" => Internal::Itrue,
             "false" => Internal::Ifalse,
             "eq" => Internal::Ieq,

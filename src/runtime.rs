@@ -15,7 +15,7 @@ pub enum Val {
         captured_vars: Vec<Rc<Val>>,
         code: Rc<Expr>,
     },
-    PartialApplication(FunctionConstant, Vec<Val>),
+    PartialApplication(FunctionConstant, Vec<Rc<Val>>),
     Type(Rc<Type>),
     Enum(String, usize),
     IO(IOAction),
@@ -49,7 +49,7 @@ fn run_io_action(ctx: &mut Context<Expr>, action: &IOAction) -> Result<(), Runti
         IOAction::GetLn(f) => {
             let mut s = String::new();
             std::io::stdin().read_line(&mut s).unwrap();
-            let mut next_action = f.apply_to(ctx, Rc::new(Val::StringLit(s)))?.get_as_io()?.clone();
+            let mut next_action = f.apply_to(ctx, &Rc::new(Val::StringLit(s)))?.get_as_io()?.clone();
             run_io_action(ctx, &mut next_action)
         }
         IOAction::Seq(a, b) => {
@@ -66,11 +66,11 @@ pub enum Function<CodeType> {
         captured_vars: Vec<Rc<Val>>,
         code: Rc<CodeType>,
     },
-    PartialApplication(FunctionConstant, Vec<Val>),
+    PartialApplication(FunctionConstant, Vec<Rc<Val>>),
 }
 
 impl Function<Expr> {
-    fn apply_to(&self, ctx: &mut Context<Expr>, arg: Rc<Val>) -> Result<Rc<Val>, RuntimeError> {
+    pub fn apply_to(&self, ctx: &mut Context<Expr>, arg: &Rc<Val>) -> Result<Rc<Val>, RuntimeError> {
         match self {
             Function::Closure {
                 captured_vars,
@@ -79,7 +79,7 @@ impl Function<Expr> {
                 let mut new_locals: Vec<Rc<Val>> = captured_vars.clone();
                 // important that we push the new argument on the end
                 // to align with Expr::Local(_)s
-                new_locals.push(arg);
+                new_locals.push(arg.clone());
                 let mut new_ctx = Context {
                     globals: ctx.globals,
                     globals_types: ctx.globals_types,
@@ -91,7 +91,9 @@ impl Function<Expr> {
                 new_ctx.interpret(code)
             }
             Function::PartialApplication(function_constant, args) => {
-                function_constant.reduce(args.clone(), arg.as_ref()).map(Rc::new)
+                let mut full_args = args.clone();
+                full_args.push(arg.clone());
+                function_constant.reduce(full_args).map(Rc::new)
             }
         }
     }
@@ -124,7 +126,7 @@ pub enum FunctionConstant {
 impl FunctionConstant {
     /// Returns the number of arguments that the function takes before
     /// it is reducible to a different `Val`
-    const fn args(&self) -> usize {
+    pub const fn args(&self) -> usize {
         match self {
             FunctionConstant::Add => 2,
             FunctionConstant::Mul => 2,
@@ -144,9 +146,37 @@ impl FunctionConstant {
             FunctionConstant::Pair => 4,
         }
     }
-    fn reduce(self, args: Vec<Val>, arg: &Val) -> Result<Val, RuntimeError> {
-        // args is a new vector which is [args.., arg]
-        let args : Vec<&Val> = Vec::from_iter(args.iter().chain(Some(arg)));
+    /// Finds the type of the next argument that needs to be provided to this function
+    /// given the already-provided arguments
+    pub fn input_type(&self, args: &Vec<Rc<Val>>) -> Rc<Type> {
+        assert!(args.len() < self.args());
+        Rc::new(match self {
+            FunctionConstant::Add | FunctionConstant::Mul | FunctionConstant::Sub
+            | FunctionConstant::IntEq | FunctionConstant::IntLt | FunctionConstant::IntGt
+            | FunctionConstant::IntLe => Type::Int,
+            FunctionConstant::Fun | FunctionConstant::PairType => Type::Type,
+            FunctionConstant::GetLn => Type::FunctionType(Rc::new(Type::String), Rc::new(Type::IO)),
+            FunctionConstant::PrintLn => Type::String,
+            FunctionConstant::Seq => Type::IO,
+            FunctionConstant::TypeOfDepProd => Type::Type,
+            FunctionConstant::OutputTypeOfMkPair => Type::Type,
+            FunctionConstant::DepProd => {
+                if args.len() == 0 {
+                    Type::Type
+                } else {
+                    let k = FunctionConstant::TypeOfDepProd
+                        .reduce(args.clone())
+                        .expect("Found a bad error idk").get_as_type().expect("Found a bad error idk");
+                    return k;
+                }
+            },
+            FunctionConstant::Pair => todo!(),
+        })
+    }
+
+    /// If this function constant is applied to a list of args, then it will return a `Val`
+    /// through computing the result of these arguments.
+    pub fn reduce(self, args: Vec<Rc<Val>>) -> Result<Val, RuntimeError> {
         if args.len() >= self.args() {
             assert!(args.len() == self.args());
             
@@ -220,15 +250,15 @@ impl FunctionConstant {
                                             let t = args[0].get_as_type()?;
                                             let f = args[1].get_as_fn()?;
                                             Val::Type(Rc::new(match f {
-                                                Function::Closure { captured_vars, code } => Type::DepProdClosure { captured_vals: captured_vars, code: code.as_ref().clone() },
+                                                Function::Closure { captured_vars, code } => Type::DepProdClosure { captured_vals: captured_vars, code },
                                                 Function::PartialApplication(function_constant, vals) => Type::DepProdPartialApp { fn_const: function_constant, args: vals },
                                             }))
                                     }
                 FunctionConstant::Pair => {
                                             let _left_type = args[0].get_as_type()?;
                                             let _right_type = args[1].get_as_type()?;
-                                            let left = Rc::new(args[2].clone());
-                                            let right = Rc::new(args[3].clone());
+                                            let left = args[2].clone();
+                                            let right = args[3].clone();
                                             Val::Pair(left, right)
                                     }
                 FunctionConstant::Seq => {
@@ -238,7 +268,7 @@ impl FunctionConstant {
                 },
             })
         } else {
-            Ok(Val::PartialApplication(self, args.into_iter().map(Clone::clone).collect()))
+            Ok(Val::PartialApplication(self, args))
         }
     }
 }
@@ -375,7 +405,7 @@ impl<'a> Context<'a, Expr> {
 
     fn interpret_atom(&mut self, atom: &Atomic) -> Result<Rc<Val>, RuntimeError> {
         match atom {
-            Atomic::Local(i) => Ok(self.get_local(i).clone()),
+            Atomic::Local(i) => Ok(self.get_local(i)),
             Atomic::Global(i) => {
                 // keeping current context isn't necessary for this
                 let mut context =
@@ -489,7 +519,7 @@ impl<'a> Context<'a, Expr> {
             Expr::Apply(func, arg) => {
                 let f: Rc<Val> = self.interpret(func)?;
                 let x: Rc<Val> = self.interpret(arg)?;
-                let res = f.get_as_fn()?.apply_to(self, x);
+                let res = f.get_as_fn()?.apply_to(self, &x);
                 res
             }
             Expr::Function {

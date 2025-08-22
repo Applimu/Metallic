@@ -83,7 +83,8 @@ fn lift_as_global(mut expr: &Expr, mut local_var_types: Vec<LambdalessExpr>, gid
     }
     // add our new locals to our list of captured variables
     local_var_types.append(&mut type_exprs);
-
+    // TODO: Optimize so that we only capture the local variables that are actually
+    // used in the expression.
     let (out_expr, mut more_lambdas) = lift_expr(expr, local_var_types.clone(), gids);
     // for (i ,_) in local_var_types.iter().enumerate() {
     //     out_expr = LambdalessExpr::Apply(Rc::new(out_expr), Rc::new(LambdalessExpr::Atom(Atomic::Local(i))));
@@ -180,6 +181,11 @@ pub fn main() {
                     case b do fn Int : y do add g 2
                     case c do fn Int : z do add g 3
                 end
+
+            def DepProd Type fn Type: T do DepProd Type fn Type: U do fun (fun T U) (fun (PairType Int T) (PairType Int U)):
+            map_prod := fn Type: T do fn Type: U do fn fun T U: f do
+                fn PairType Int T: input do
+                pair (first input) (f (second input))
         "#;
     let prog = make_program(file_str).expect("Parsing error");
 
