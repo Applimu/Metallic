@@ -110,16 +110,23 @@ pub enum FunctionConstant {
     IntLe,
 
     Fun,
+    /// `&` given a name
     PairType,
 
     GetLn,
     PrintLn,
     Seq,
+    /// Definition: `fn Type: T do (T -> Type) -> Type`
+    TypeOfDepProd,      
+    /// Definition: `fn Type: t1 do (Type: t2) -> t1 -> t2 -> t1 & t2`
+    OutputTypeOfMkPair, 
+    /// Definition: `fn Type: t1 do fn Type: t2 do t1 -> t2 -> t1 & t2`
+    OutputTypeOfMkPair2,
 
-    TypeOfDepProd,      // fn Type: T do (T -> Type) -> Type
-    OutputTypeOfMkPair, // fn Type: t1 do (Type: t2) -> t1 & t2
-
+    /// Takes a `Type: T` and a function of type `T -> Type` and
+    /// returns the type of dependent products over the provided type family
     DepProd,
+    /// `Pair t1 t2 x y` constructs a tuple `(x,y)` of type `(t1,t2)`
     Pair,
 }
 
@@ -142,6 +149,7 @@ impl FunctionConstant {
             FunctionConstant::Seq => 2,
             FunctionConstant::TypeOfDepProd => 1,
             FunctionConstant::OutputTypeOfMkPair => 1,
+            FunctionConstant::OutputTypeOfMkPair2 => 2,
             FunctionConstant::DepProd => 2,
             FunctionConstant::Pair => 4,
         }
@@ -160,6 +168,7 @@ impl FunctionConstant {
             FunctionConstant::Seq => Type::IO,
             FunctionConstant::TypeOfDepProd => Type::Type,
             FunctionConstant::OutputTypeOfMkPair => Type::Type,
+            FunctionConstant::OutputTypeOfMkPair2 => Type::Type,
             FunctionConstant::DepProd => {
                 if args.len() == 0 {
                     Type::Type
@@ -182,85 +191,101 @@ impl FunctionConstant {
             
             Ok(match self {
                 FunctionConstant::Add => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::IntLit(x + y)
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::IntLit(x + y)
+                }
                 FunctionConstant::Mul => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::IntLit(x * y)
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::IntLit(x * y)
+                }
                 FunctionConstant::Sub => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::IntLit(x - y)
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::IntLit(x - y)
+                }
                 FunctionConstant::Fun => {
-                                            let x = args[0].get_as_type()?;
-                                            let y = args[1].get_as_type()?;
-                                            Val::Type(Rc::new(Type::FunctionType(x, y)))
-                                    }
+                    let x = args[0].get_as_type()?;
+                    let y = args[1].get_as_type()?;
+                    Val::Type(Rc::new(Type::FunctionType(x, y)))
+                }
                 FunctionConstant::PairType => {
-                                            let x = args[0].get_as_type()?;
-                                            let y = args[1].get_as_type()?;
-                                            Val::Type(Rc::new(Type::Pair(x, y)))
-                                    }
+                    println!("MAKING PAIRTYPE ON {:?}", &args);
+                    let x = args[0].get_as_type()?;
+                    let y = args[1].get_as_type()?;
+                    Val::Type(Rc::new(Type::Pair(x, y)))
+                }
                 FunctionConstant::IntEq => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::Enum("Bool".to_owned(), if x == y { 1 } else { 0 })
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::Enum("Bool".to_owned(), if x == y { 1 } else { 0 })
+                }
                 FunctionConstant::IntLt => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::Enum("Bool".to_owned(), if x < y { 1 } else { 0 })
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::Enum("Bool".to_owned(), if x < y { 1 } else { 0 })
+                }
                 FunctionConstant::IntGt => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::Enum("Bool".to_owned(), if x > y { 1 } else { 0 })
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::Enum("Bool".to_owned(), if x > y { 1 } else { 0 })
+                }
                 FunctionConstant::IntLe => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::Enum("Bool".to_owned(), if x <= y { 1 } else { 0 })
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::Enum("Bool".to_owned(), if x <= y { 1 } else { 0 })
                 }
                 FunctionConstant::GetLn => {
-                                            let x = args[0].get_as_fn()?;
-                                            Val::IO(IOAction::GetLn(x.clone()))
-                                    }
+                    let x = args[0].get_as_fn()?;
+                    Val::IO(IOAction::GetLn(x.clone()))
+                }
                 FunctionConstant::PrintLn => {
-                                            let x = args[0].get_as_string()?;
-                                            Val::IO(IOAction::PrintLn(x.clone()))
-                                    }
+                    let x = args[0].get_as_string()?;
+                    Val::IO(IOAction::PrintLn(x.clone()))
+                }
                 FunctionConstant::TypeOfDepProd => {
-                                            let x = args[0].get_as_type()?;
-                                            let t = Rc::new(Type::Type);
-                                            Val::Type(Rc::new(Type::FunctionType(
-                                                Rc::new(Type::FunctionType(x, t.clone())),
-                                                t,
-                                            )))
-                                    }
+                    let x = args[0].get_as_type()?;
+                    let t = Rc::new(Type::Type);
+                    Val::Type(Rc::new(Type::FunctionType(
+                        Rc::new(Type::FunctionType(x, t.clone())),
+                        t,
+                    )))
+                }
                 FunctionConstant::OutputTypeOfMkPair => {
-                                            let t = args[0].get_as_type()?;
-                                            todo!();
-                                    }
+                    let t = args[0].get_as_type()?;
+                    Val::Type(Rc::new(Type::DepProdPartialApp {
+                        fn_const: FunctionConstant::OutputTypeOfMkPair2,
+                        args: vec![Rc::new(Val::Type(t))],
+                    } ))
+                }
+                FunctionConstant::OutputTypeOfMkPair2 => {
+                    let t1 = args[0].get_as_type()?;
+                    let t2 = args[1].get_as_type()?;
+                    Val::Type(Rc::new(Type::FunctionType(
+                        t1.clone(),
+                        Rc::new(Type::FunctionType(
+                            t2.clone(),
+                            Rc::new(Type::Pair(t1, t2))
+                        ))
+                    )))
+                },
                 FunctionConstant::DepProd => {
-                                            let t = args[0].get_as_type()?;
-                                            let f = args[1].get_as_fn()?;
-                                            Val::Type(Rc::new(match f {
-                                                Function::Closure { captured_vars, code } => Type::DepProdClosure { captured_vals: captured_vars, code },
-                                                Function::PartialApplication(function_constant, vals) => Type::DepProdPartialApp { fn_const: function_constant, args: vals },
-                                            }))
-                                    }
+                    let t = args[0].get_as_type()?;
+                    let f = args[1].get_as_fn()?;
+                    Val::Type(Rc::new(match f {
+                        Function::Closure { captured_vars, code } => Type::DepProdClosure { captured_vals: captured_vars, code },
+                        Function::PartialApplication(function_constant, vals) => Type::DepProdPartialApp { fn_const: function_constant, args: vals },
+                    }))
+                }
                 FunctionConstant::Pair => {
-                                            let _left_type = args[0].get_as_type()?;
-                                            let _right_type = args[1].get_as_type()?;
-                                            let left = args[2].clone();
-                                            let right = args[3].clone();
-                                            Val::Pair(left, right)
-                                    }
+                    println!("MAKING PAIR ON {:?}", &args);
+                    let _left_type = args[0].get_as_type()?;
+                    let _right_type = args[1].get_as_type()?;
+                    let left = args[2].clone();
+                    let right = args[3].clone();
+                    Val::Pair(left, right)
+                }
                 FunctionConstant::Seq => {
                     let first = args[0].get_as_io()?;
                     let second = args[1].get_as_io()?;

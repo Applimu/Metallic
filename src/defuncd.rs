@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{make_program, Atomic, Expr, Program};
 
@@ -7,7 +7,7 @@ use crate::{make_program, Atomic, Expr, Program};
 // UnresolvedExpr -> Syntax
 
 /// An Expression which includes no lambdas inside,
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LambdalessExpr {
     /// Application of a function to a value
     Apply(Rc<LambdalessExpr>, Rc<LambdalessExpr>),
@@ -167,8 +167,32 @@ pub fn lift_lambdas(prog: &Program) -> LiftedProgram {
         assert!(result.globals.len() == new_id);
         result.globals.append(&mut new_lambdas);
     }
+
+    for eval in prog.evals.iter() {
+        let (lifted_eval, mut new_lambdas) = lift_expr(eval, Vec::new(), &mut ids);
+        result.globals.append(&mut new_lambdas);
+        result.evals.push(lifted_eval);
+
+    }
     result
 } 
+
+/*
+A program is *defunctionalized* if all higher order functions are removed
+*/
+/// Returns a list of indices into the provided `LiftedProgram` paired with the
+/// argument indices into their definitions that are functions.
+fn find_higher_order_args(prog: &LiftedProgram) -> HashMap<LambdalessExpr, Vec<(usize, usize)>> {
+    let mut higher_order_args : HashMap<LambdalessExpr, Vec<(usize, usize)>> = HashMap::new();
+    for i in 0..prog.globals.len() {
+        for (j, arg_type) in prog.globals[i].input_types.iter().enumerate() {
+            todo!()
+        }
+    }
+    higher_order_args
+}
+
+
 
 pub fn main() {
     let file_str =
@@ -186,6 +210,9 @@ pub fn main() {
             map_prod := fn Type: T do fn Type: U do fn fun T U: f do
                 fn PairType Int T: input do
                 pair (first input) (f (second input))
+
+            eval add 3 5
+            eval (fn Type: T do add 6) Int 9
         "#;
     let prog = make_program(file_str).expect("Parsing error");
 

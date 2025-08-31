@@ -18,7 +18,7 @@ mod type_checking;
 mod defuncd;
 
 /// An atomic value in an expression, a leaf of the AST
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Atomic {
     /// index reference to local variable
     Local(usize),
@@ -103,7 +103,7 @@ impl Type {
 
 /// These are constant values that are defined internally by the compiler
 /// It's made for pairing identifiers with their `runtime::Val`s
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
 pub enum Internal {
     IType,    // type of types
     Ifun,     // curried function-type function on types

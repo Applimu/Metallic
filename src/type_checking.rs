@@ -69,6 +69,7 @@ fn check_type(
     expr: &Expr,
     signature: &Type,
 ) -> Result<(), CheckerError> {
+    println!("CHECKING {:?} AS {:?}", expr, signature);
     match expr {
         Expr::Apply(func, arg) => {
             // three options:
@@ -119,6 +120,8 @@ fn check_type(
                 Type::DepProdClosure { captured_vals, code } => {
 
                     println!("WARNING: Type checking dependent products over closures not implemented\nThis could be incorrectly typed");
+                    dbg!(&captured_vals);
+                    dbg!(&code);
                     Ok(())
                 }
                 Type::DepProdPartialApp { fn_const, args } => {
@@ -162,6 +165,7 @@ fn check_type(
 
 /// Infers what the type of an expression is in a given context
 fn infer_type(ctx: &mut CheckingContext, expr: &Expr) -> Result<Rc<Type>, CheckerError> {
+    println!("INFERRING {:?}", expr);
     match expr {
         Expr::Apply(func, arg) => match infer_type(ctx, func)?.as_ref() {
             Type::FunctionType(input_type, output_type) => {
@@ -259,6 +263,16 @@ pub fn type_check_program(prog: &Program) -> Result<(), CheckerError> {
             locals: Vec::new(),
         };
         check_type(&mut new_ctx, global, global_type.as_ref())?
+    }
+
+    for to_eval in prog.evals.iter() {
+        let mut new_ctx = CheckingContext {
+            globals: &prog.globals,
+            global_types: &prog.global_types,
+            locals: Vec::new(),
+        };
+        // we infer the type but we kinda ignore it after :/
+        infer_type(&mut new_ctx, to_eval)?;
     }
     Ok(())
 }
