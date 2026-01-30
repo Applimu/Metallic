@@ -9,11 +9,17 @@ use crate::{
     tokenize::Operator,
 };
 
-pub(crate) const OPERATOR_TABLE: [(&str, Internal, usize); 4] = [
+/// This is a table which contains the names of the operators, their
+/// corresponding `Internal` value, and their corresponding precedence.
+pub(crate) const OPERATOR_TABLE: [(&str, Internal, usize); 6] = [
     ("+", Internal::Iadd, 5),
     ("-", Internal::Isub, 5),
     ("*", Internal::Imul, 10),
     ("->", Internal::Ifun, 1),
+    // I wrote this code so long ago i don't remember how the precedence
+    // is supposed to work
+    ("<=", Internal::Ile, 1000),
+    ("==", Internal::Ieq, 1000),
 ];
 
 //TODO: create a better error message
@@ -25,6 +31,9 @@ pub enum ResolveError {
     UnknownOperator(String),
 }
 
+/// The syntax tree of the program. It's called an `UnresolvedExpr`
+/// because none of the variables have been resolved yet.
+/// I should probabably rename this to `Syntax` or something in the future.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnresolvedExpr {
     Apply(Box<UnresolvedExpr>, Box<UnresolvedExpr>),
@@ -42,7 +51,7 @@ pub enum UnresolvedExpr {
     Let(Box<Binding>, Box<UnresolvedExpr>),
 }
 
-// Resolves all names inside an expression and converts them into an indices of the provided array
+/// Resolves all names inside an expression and converts them into an indices of the provided array
 // TODO: Allow for a better variable shadowing system.
 fn resolve_expr(
     global_names: &Vec<String>,
@@ -106,6 +115,7 @@ fn resolve_expr(
                 if enum_variants.len() != branches.len() {
                     continue;
                 }
+                // TODO: Is it better to check the other way around?
                 for case in branches.keys() {
                     if !enum_variants.contains(case) {
                         continue 'outer;
@@ -145,7 +155,11 @@ fn resolve_expr(
             let new_value = resolve_expr(global_names, local_names, case_groups, value)?;
             local_names.push(var_name.clone());
             let expr = resolve_expr(global_names, local_names, case_groups, *expr)?;
-            assert_eq!(local_names.pop().unwrap(), var_name);
+            assert_eq!(
+                local_names.pop().unwrap(),
+                var_name,
+                "Local variables have been moved around unexpectedly"
+            );
 
             Ok(Expr::Let {
                 new_value_type: Rc::new(new_value_type),
@@ -160,42 +174,43 @@ fn resolve_name(
     global_names: &Vec<String>,
     local_names: &mut Vec<String>,
     case_groups: &HashMap<String, Vec<String>>,
-    s: String,
+    name: String,
 ) -> Result<Atomic, ResolveError> {
     // local variables shadow globals shadow internal
-    if let Some(value) = get_from_locals(local_names, &s) {
+    if let Some(value) = get_from_locals(local_names, &name) {
         return Ok(Atomic::Local(value));
     }
-    for (i, name) in global_names.iter().enumerate() {
-        if *name == s {
+    // global names shadow enum names and variants
+    for (i, g_name) in global_names.iter().enumerate() {
+        if *g_name == name {
             return Ok(Atomic::Global(i));
         }
     }
-
+    // enum names shadow internally defined values
     for (k, v) in case_groups.iter() {
         // println!("{:?}: {:?}", k, v);
-        if *k == s {
+        if *k == name {
             return Ok(Atomic::EnumType(k.clone()));
         }
         for (i, variant) in v.iter().enumerate() {
-            if *variant == s {
+            if *variant == name {
                 return Ok(Atomic::EnumVariant(k.clone(), i));
             }
         }
     }
 
-    match Internal::try_as_internal(&s) {
+    match Internal::try_as_internal(&name) {
         Some(v) => Ok(Atomic::Internal(v)),
-        None => Err(ResolveError::UnknownName(s)),
+        None => Err(ResolveError::UnknownName(name)),
     }
 }
 
-// Find the name in a list of local names and return the index of the variable
-// if it exists. Local variables are currently ordered in the order that they are
-// added to scope, which is the reverse of de brujin indices.
+/// Find the name in a list of local names and return the index of the variable
+/// if it exists. Local variables are currently ordered in the order that they are
+/// added to scope, which is the reverse of de brujin indices.
 fn get_from_locals(locals: &mut Vec<String>, s: &String) -> Option<usize> {
     for (i, name) in locals.iter().enumerate() {
-        // here `i` gives the debrujin indices
+        // here `i` gives the index of the local variable
         if **name == *s {
             return Some(i);
         }
@@ -203,9 +218,9 @@ fn get_from_locals(locals: &mut Vec<String>, s: &String) -> Option<usize> {
     None
 }
 
-// resolves references to local, global, and internally defined names. Multiple variables with
-// the same name give undefined behavior currently.
-// TODO: Think about adding name overloading.
+/// resolves references to local, global, and internally defined names. Multiple variables with
+/// the same name give undefined behavior currently.
+/// TODO: Think about adding name overloading.
 pub fn resolve_exprs(
     global_names: &Vec<String>,
     case_groups: &HashMap<String, Vec<String>>,

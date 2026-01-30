@@ -11,11 +11,11 @@ def Int -> (Int -> Int): gcd := fn Int: n do
 			gcd m n
 	end
 
-def fun Int (fun Int Bool): is_coprime := fn Int: n do
+def Int -> (Int -> Bool): is_coprime := fn Int: n do
 	fn Int: m do
 	gcd n m == 1
 	
-def Int -> (Int -> Bool): is_prime_helper := fn Int: i do
+def Int -> Int -> Bool: is_prime_helper := fn Int: i do
 	fn Int: p do
 	match p <= (i * i)
 		case true do true
@@ -28,7 +28,7 @@ def Int -> (Int -> Bool): is_prime_helper := fn Int: i do
 			end
 	end
 
-def fun Int Bool: is_prime :=
+def Int -> Bool: is_prime :=
 	 fn Int: p do is_prime_helper 1 p
 
 
