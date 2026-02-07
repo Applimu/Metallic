@@ -11,7 +11,11 @@ pub enum Val {
     // the unit value, not to be confused with Type::Unit
     Unit,
     Pair(Rc<Val>, Rc<Val>),
-    Function(Function),
+    Closure {
+        captured_vars: Vec<Rc<Val>>,
+        code: Rc<Expr>,
+    },
+    PartialApplication(FunctionConstant, Vec<Rc<Val>>),
     Type(Rc<Type>),
     Enum(String, usize),
     IO(IOAction),
@@ -31,12 +35,12 @@ pub enum RuntimeError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IOAction {
     PrintLn(String),
-    GetLn(Function),
+    GetLn(Function<Expr>),
     Seq(Rc<IOAction>, Rc<IOAction>),
     Done,
 }
 
-fn run_io_action(ctx: &mut Context, action: &IOAction) -> Result<(), RuntimeError> {
+fn run_io_action(ctx: &mut Context<Expr>, action: &IOAction) -> Result<(), RuntimeError> {
     match action {
         IOAction::PrintLn(s) => {
             println!("{}", s);
@@ -45,7 +49,7 @@ fn run_io_action(ctx: &mut Context, action: &IOAction) -> Result<(), RuntimeErro
         IOAction::GetLn(f) => {
             let mut s = String::new();
             std::io::stdin().read_line(&mut s).unwrap();
-            let mut next_action = f.apply_to(ctx, Rc::new(Val::StringLit(s)))?.get_as_io()?.clone();
+            let mut next_action = f.apply_to(ctx, &Rc::new(Val::StringLit(s)))?.get_as_io()?.clone();
             run_io_action(ctx, &mut next_action)
         }
         IOAction::Seq(a, b) => {
@@ -57,16 +61,16 @@ fn run_io_action(ctx: &mut Context, action: &IOAction) -> Result<(), RuntimeErro
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Function {
+pub enum Function<CodeType> {
     Closure {
         captured_vars: Vec<Rc<Val>>,
-        code: Rc<Expr>,
+        code: Rc<CodeType>,
     },
-    PartialApplication(FunctionConstant, Vec<Val>),
+    PartialApplication(FunctionConstant, Vec<Rc<Val>>),
 }
 
-impl Function {
-    fn apply_to(&self, ctx: &mut Context, arg: Rc<Val>) -> Result<Rc<Val>, RuntimeError> {
+impl Function<Expr> {
+    pub fn apply_to(&self, ctx: &mut Context<Expr>, arg: &Rc<Val>) -> Result<Rc<Val>, RuntimeError> {
         match self {
             Function::Closure {
                 captured_vars,
@@ -75,7 +79,7 @@ impl Function {
                 let mut new_locals: Vec<Rc<Val>> = captured_vars.clone();
                 // important that we push the new argument on the end
                 // to align with Expr::Local(_)s
-                new_locals.push(arg);
+                new_locals.push(arg.clone());
                 let mut new_ctx = Context {
                     globals: ctx.globals,
                     globals_types: ctx.globals_types,
@@ -87,7 +91,9 @@ impl Function {
                 new_ctx.interpret(code)
             }
             Function::PartialApplication(function_constant, args) => {
-                function_constant.reduce(args.clone(), arg.as_ref()).map(Rc::new)
+                let mut full_args = args.clone();
+                full_args.push(arg.clone());
+                function_constant.reduce(full_args).map(Rc::new)
             }
         }
     }
@@ -104,23 +110,30 @@ pub enum FunctionConstant {
     IntLe,
 
     Fun,
+    /// `&` given a name
     PairType,
 
     GetLn,
     PrintLn,
     Seq,
+    /// Definition: `fn Type: T do (T -> Type) -> Type`
+    TypeOfDepProd,      
+    /// Definition: `fn Type: t1 do (Type: t2) -> t1 -> t2 -> t1 & t2`
+    OutputTypeOfMkPair, 
+    /// Definition: `fn Type: t1 do fn Type: t2 do t1 -> t2 -> t1 & t2`
+    OutputTypeOfMkPair2,
 
-    TypeOfDepProd,      // fn Type: T do (T -> Type) -> Type
-    OutputTypeOfMkPair, // fn Type: t1 do (Type: t2) -> t1 & t2
-
+    /// Takes a `Type: T` and a function of type `T -> Type` and
+    /// returns the type of dependent products over the provided type family
     DepProd,
+    /// `Pair t1 t2 x y` constructs a tuple `(x,y)` of type `(t1,t2)`
     Pair,
 }
 
 impl FunctionConstant {
     /// Returns the number of arguments that the function takes before
     /// it is reducible to a different `Val`
-    const fn args(&self) -> usize {
+    pub const fn args(&self) -> usize {
         match self {
             FunctionConstant::Add => 2,
             FunctionConstant::Mul => 2,
@@ -136,96 +149,143 @@ impl FunctionConstant {
             FunctionConstant::Seq => 2,
             FunctionConstant::TypeOfDepProd => 1,
             FunctionConstant::OutputTypeOfMkPair => 1,
+            FunctionConstant::OutputTypeOfMkPair2 => 2,
             FunctionConstant::DepProd => 2,
             FunctionConstant::Pair => 4,
         }
     }
-    fn reduce(self, args: Vec<Val>, arg: &Val) -> Result<Val, RuntimeError> {
-        // args is a new vector which is [args.., arg]
-        let args : Vec<&Val> = Vec::from_iter(args.iter().chain(Some(arg)));
+    /// Finds the type of the next argument that needs to be provided to this function
+    /// given the already-provided arguments
+    pub fn input_type(&self, args: &Vec<Rc<Val>>) -> Rc<Type> {
+        assert!(args.len() < self.args());
+        Rc::new(match self {
+            FunctionConstant::Add | FunctionConstant::Mul | FunctionConstant::Sub
+            | FunctionConstant::IntEq | FunctionConstant::IntLt | FunctionConstant::IntGt
+            | FunctionConstant::IntLe => Type::Int,
+            FunctionConstant::Fun | FunctionConstant::PairType => Type::Type,
+            FunctionConstant::GetLn => Type::FunctionType(Rc::new(Type::String), Rc::new(Type::IO)),
+            FunctionConstant::PrintLn => Type::String,
+            FunctionConstant::Seq => Type::IO,
+            FunctionConstant::TypeOfDepProd => Type::Type,
+            FunctionConstant::OutputTypeOfMkPair => Type::Type,
+            FunctionConstant::OutputTypeOfMkPair2 => Type::Type,
+            FunctionConstant::DepProd => {
+                if args.len() == 0 {
+                    Type::Type
+                } else {
+                    let k = FunctionConstant::TypeOfDepProd
+                        .reduce(args.clone())
+                        .expect("Found a bad error idk").get_as_type().expect("Found a bad error idk");
+                    return k;
+                }
+            },
+            FunctionConstant::Pair => todo!(),
+        })
+    }
+
+    /// If this function constant is applied to a list of args, then it will return a `Val`
+    /// through computing the result of these arguments.
+    pub fn reduce(self, args: Vec<Rc<Val>>) -> Result<Val, RuntimeError> {
         if args.len() >= self.args() {
             assert!(args.len() == self.args());
             
             Ok(match self {
                 FunctionConstant::Add => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::IntLit(x + y)
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::IntLit(x + y)
+                }
                 FunctionConstant::Mul => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::IntLit(x * y)
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::IntLit(x * y)
+                }
                 FunctionConstant::Sub => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::IntLit(x - y)
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::IntLit(x - y)
+                }
                 FunctionConstant::Fun => {
-                                            let x = args[0].get_as_type()?;
-                                            let y = args[1].get_as_type()?;
-                                            Val::Type(Rc::new(Type::FunctionType(x, y)))
-                                    }
+                    let x = args[0].get_as_type()?;
+                    let y = args[1].get_as_type()?;
+                    Val::Type(Rc::new(Type::FunctionType(x, y)))
+                }
                 FunctionConstant::PairType => {
-                                            let x = args[0].get_as_type()?;
-                                            let y = args[1].get_as_type()?;
-                                            Val::Type(Rc::new(Type::Pair(x, y)))
-                                    }
+                    println!("MAKING PAIRTYPE ON {:?}", &args);
+                    let x = args[0].get_as_type()?;
+                    let y = args[1].get_as_type()?;
+                    Val::Type(Rc::new(Type::Pair(x, y)))
+                }
                 FunctionConstant::IntEq => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::Enum("Bool".to_owned(), if x == y { 1 } else { 0 })
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::Enum("Bool".to_owned(), if x == y { 1 } else { 0 })
+                }
                 FunctionConstant::IntLt => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::Enum("Bool".to_owned(), if x < y { 1 } else { 0 })
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::Enum("Bool".to_owned(), if x < y { 1 } else { 0 })
+                }
                 FunctionConstant::IntGt => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::Enum("Bool".to_owned(), if x > y { 1 } else { 0 })
-                                    }
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::Enum("Bool".to_owned(), if x > y { 1 } else { 0 })
+                }
                 FunctionConstant::IntLe => {
-                                            let x = args[0].get_as_int()?;
-                                            let y = args[1].get_as_int()?;
-                                            Val::Enum("Bool".to_owned(), if x <= y { 1 } else { 0 })
+                    let x = args[0].get_as_int()?;
+                    let y = args[1].get_as_int()?;
+                    Val::Enum("Bool".to_owned(), if x <= y { 1 } else { 0 })
                 }
                 FunctionConstant::GetLn => {
-                                            let x = args[0].get_as_fn()?;
-                                            Val::IO(IOAction::GetLn(x.clone()))
-                                    }
+                    let x = args[0].get_as_fn()?;
+                    Val::IO(IOAction::GetLn(x.clone()))
+                }
                 FunctionConstant::PrintLn => {
-                                            let x = args[0].get_as_string()?;
-                                            Val::IO(IOAction::PrintLn(x.clone()))
-                                    }
+                    let x = args[0].get_as_string()?;
+                    Val::IO(IOAction::PrintLn(x.clone()))
+                }
                 FunctionConstant::TypeOfDepProd => {
-                                            let x = args[0].get_as_type()?;
-                                            let t = Rc::new(Type::Type);
-                                            Val::Type(Rc::new(Type::FunctionType(
-                                                Rc::new(Type::FunctionType(x, t.clone())),
-                                                t,
-                                            )))
-                                    }
+                    let x = args[0].get_as_type()?;
+                    let t = Rc::new(Type::Type);
+                    Val::Type(Rc::new(Type::FunctionType(
+                        Rc::new(Type::FunctionType(x, t.clone())),
+                        t,
+                    )))
+                }
                 FunctionConstant::OutputTypeOfMkPair => {
-                                            let t = args[0].get_as_type()?;
-                                            todo!();
-                                    }
+                    let t = args[0].get_as_type()?;
+                    Val::Type(Rc::new(Type::DepProdPartialApp {
+                        fn_const: FunctionConstant::OutputTypeOfMkPair2,
+                        args: vec![Rc::new(Val::Type(t))],
+                    } ))
+                }
+                FunctionConstant::OutputTypeOfMkPair2 => {
+                    let t1 = args[0].get_as_type()?;
+                    let t2 = args[1].get_as_type()?;
+                    Val::Type(Rc::new(Type::FunctionType(
+                        t1.clone(),
+                        Rc::new(Type::FunctionType(
+                            t2.clone(),
+                            Rc::new(Type::Pair(t1, t2))
+                        ))
+                    )))
+                },
                 FunctionConstant::DepProd => {
-                                            let t = args[0].get_as_type()?;
-                                            let f = args[1].get_as_fn()?;
-                                            Val::Type(Rc::new(Type::DepProd {
-                                                family: Rc::new(f.clone()),
-                                            }))
-                                    }
+                    let t = args[0].get_as_type()?;
+                    let f = args[1].get_as_fn()?;
+                    Val::Type(Rc::new(match f {
+                        Function::Closure { captured_vars, code } => Type::DepProdClosure { captured_vals: captured_vars, code },
+                        Function::PartialApplication(function_constant, vals) => Type::DepProdPartialApp { fn_const: function_constant, args: vals },
+                    }))
+                }
                 FunctionConstant::Pair => {
-                                            let _left_type = args[0].get_as_type()?;
-                                            let _right_type = args[1].get_as_type()?;
-                                            let left = Rc::new(args[2].clone());
-                                            let right = Rc::new(args[3].clone());
-                                            Val::Pair(left, right)
-                                    }
+                    println!("MAKING PAIR ON {:?}", &args);
+                    let _left_type = args[0].get_as_type()?;
+                    let _right_type = args[1].get_as_type()?;
+                    let left = args[2].clone();
+                    let right = args[3].clone();
+                    Val::Pair(left, right)
+                }
                 FunctionConstant::Seq => {
                     let first = args[0].get_as_io()?;
                     let second = args[1].get_as_io()?;
@@ -233,7 +293,7 @@ impl FunctionConstant {
                 },
             })
         } else {
-            Ok(Val::Function(Function::PartialApplication(self, args.into_iter().map(Clone::clone).collect())))
+            Ok(Val::PartialApplication(self, args))
         }
     }
 }
@@ -271,11 +331,12 @@ impl Val {
 
     // Unwraps this runtime value as a function, and then applies that function to
     // the supplied argument
-    pub fn get_as_fn(&self) -> Result<&Function, RuntimeError> {
-        match self {
-            Val::Function(f) => Ok(f),
-            _ => Err(RuntimeError::NotAFunction {
-                value: self.clone(),
+    pub fn get_as_fn(&self) -> Result<Function<Expr>, RuntimeError> {
+        match self.clone() {
+            Val::Closure { captured_vars, code } => Ok(Function::Closure { captured_vars, code }),
+            Val::PartialApplication(fn_const, args) => Ok(Function::PartialApplication(fn_const, args)),
+            yea => Err(RuntimeError::NotAFunction {
+                value: yea,
             }),
         }
     }
@@ -299,32 +360,27 @@ impl Val {
 
     // Given a runtime value, obtains the type of the given value. This is different
     // from get_as_type which asserts that the given value is a type and unwraps it
-    pub fn get_type(&self, ctx: &Context) -> Rc<Type> {
+    pub fn get_type(&self, ctx: &Context<Expr>) -> Rc<Type> {
         Rc::new(match self {
             Val::Type(_) => Type::Type,
             Val::IntLit(_) => Type::Int,
             Val::StringLit(_) => Type::String,
             Val::Unit => Type::Unit,
             Val::Pair(val1, val2) => Type::Pair(val1.get_type(ctx).clone(), val2.get_type(ctx).clone()),
-            Val::Function(Function::Closure {
-                captured_vars: _,
-                code: _,
-            }) => todo!("getting types of closures not implemented :/"),
-            Val::Function(Function::PartialApplication(f, args)) => {
-                todo!("getting type of partial application not implemented :(")
-            }
             Val::Enum(enum_name, _) => Type::Enum(enum_name.clone()),
             Val::IO(_) => Type::IO,
             Val::FreeVariable(idx) => return ctx.free_locals[*idx].clone(),
+            Val::Closure { captured_vars, code } => todo!(),
+            Val::PartialApplication(function_constant, vals) => todo!(),
         })
     }
 }
 
 /// A context where evaluation of an expression can take place.
 #[derive(Debug, Clone)]
-pub struct Context<'a> {
-    globals: &'a [Rc<Expr>],
-    globals_types: &'a [Rc<Expr>],
+pub struct Context<'a, CodeType> {
+    globals: &'a [Rc<CodeType>],
+    globals_types: &'a [Rc<CodeType>],
     globals_names: &'a [String],
     // Only local variables can ever be free variables, so debrujin
     // indices work fine here
@@ -332,7 +388,7 @@ pub struct Context<'a> {
     bound_locals: Vec<Rc<Val>>,
 }
 
-impl<'a> Context<'a> {
+impl<'a> Context<'a, Expr> {
     pub const fn new(
         globals: &'a [Rc<Expr>],
         globals_types: &'a [Rc<Expr>],
@@ -374,7 +430,7 @@ impl<'a> Context<'a> {
 
     fn interpret_atom(&mut self, atom: &Atomic) -> Result<Rc<Val>, RuntimeError> {
         match atom {
-            Atomic::Local(i) => Ok(self.get_local(i).clone()),
+            Atomic::Local(i) => Ok(self.get_local(i)),
             Atomic::Global(i) => {
                 // keeping current context isn't necessary for this
                 let mut context =
@@ -450,25 +506,25 @@ impl<'a> Context<'a> {
             Val::StringLit(s) => format!("\"{}\"", s),
             Val::Unit => String::from_str("()").unwrap(),
             Val::Pair(val1, val2) => {
-                format!("({}, {})", self.display_val(val1), self.display_val(val2))
-            }
-            Val::Function(Function::PartialApplication(f_const, vals)) => {
-                let mut str = format!("{:?}", f_const);
-                for val in vals.iter() {
-                    str += " ";
-                    str += &self.display_val(val)
-                }
-                str
-            }
-            Val::Function(Function::Closure {
-                captured_vars: _,
-                code: _,
-            }) => {
-                format!("[Closure]")
-            }
+                        format!("({}, {})", self.display_val(val1), self.display_val(val2))
+                    }
+            Val::PartialApplication(f_const, vals)=> {
+                        let mut str = format!("{:?}", f_const);
+                        for val in vals.iter() {
+                            str += " ";
+                            str += &self.display_val(val)
+                        }
+                        str
+                    }
+            Val::Closure {
+                        captured_vars: _,
+                        code: _
+                    }=> {
+                        format!("[Closure]")
+                    }
             Val::Type(t) => {
-                format!("{:?}", t)
-            }
+                        format!("{:?}", t)
+                    }
             Val::Enum(enum_type, i) => format!("{}::{}", enum_type, i),
             Val::IO(_ioaction) => format!("[IO Action]"),
             Val::FreeVariable(i) => format!("(Free var #{})", i),
@@ -488,16 +544,16 @@ impl<'a> Context<'a> {
             Expr::Apply(func, arg) => {
                 let f: Rc<Val> = self.interpret(func)?;
                 let x: Rc<Val> = self.interpret(arg)?;
-                let res = f.get_as_fn()?.apply_to(self, x);
+                let res = f.get_as_fn()?.apply_to(self, &x);
                 res
             }
             Expr::Function {
                 input_type: _,
                 output,
-            } => Ok(Rc::new(Val::Function(Function::Closure {
+            } => Ok(Rc::new(Val::Closure {
                 captured_vars: self.bound_locals.clone(),
                 code: output.clone(),
-            }))),
+            })),
             Expr::Atom(a) => self.interpret_atom(a),
             Expr::Match {
                 enum_name,

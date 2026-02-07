@@ -5,7 +5,7 @@ use std::{collections::HashMap, env};
 
 use parsing::{Binding, Command, ParseError};
 use resolve::{ResolveError, UnresolvedExpr, resolve_exprs};
-use runtime::{Function, FunctionConstant, RuntimeError, Val};
+use runtime::{FunctionConstant, RuntimeError, Val};
 use type_checking::{CheckerError, type_check_program};
 
 mod parsing;
@@ -15,9 +15,10 @@ mod runtime;
 mod tests;
 mod tokenize;
 mod type_checking;
+mod defuncd;
 
 /// An atomic value in an expression, a leaf of the AST
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Atomic {
     /// index reference to local variable
     Local(usize),
@@ -65,16 +66,27 @@ pub enum Expr {
 pub enum Type {
     /// The type of types, which doesn't have any universe levels or anything (yet?)
     Type,
+    /// The type of integers
     Int,
+    /// The type of string literals
     String,
+    /// The type of ()
     Unit,
     /// A Product type
     Pair(Rc<Type>, Rc<Type>),
     /// An arrow type
     FunctionType(Rc<Type>, Rc<Type>),
-    DepProd {
+    /// A dependent product over a closure function
+    DepProdClosure {
         // this is an arrow function which should always return a type
-        family: Rc<Function>,
+        captured_vals: Vec<Rc<Val>>,
+        code: Rc<Expr>
+    },
+    /// A dependent product over a `FunctionConstant`
+    DepProdPartialApp {
+        // this is an arrow function which should always return a type
+        fn_const: FunctionConstant,
+        args: Vec<Rc<Val>>,
     },
     /// An enum type, represented by it's name
     Enum(String),
@@ -91,7 +103,7 @@ impl Type {
 
 /// These are constant values that are defined internally by the compiler
 /// It's made for pairing identifiers with their `runtime::Val`s
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
 pub enum Internal {
     IType,    // type of types
     Ifun,     // curried function-type function on types
@@ -111,6 +123,8 @@ pub enum Internal {
 
     IPairType, // the type of pairs of elements
     ImkPair,   // the function that makes a pair of elements
+    Ifirst,    // gets the first half of a pair
+    Isecond,   // gets the second half of a pair
 
     IBool, // the type of the boolean domain
     IString,
@@ -126,7 +140,7 @@ pub enum Internal {
 impl Internal {
     /// Constructs the `Type` of the provided `Internal`
     fn get_type(&self) -> Type {
-        use crate::Type::{DepProd, FunctionType, IO, Int, String};
+        use crate::Type::{FunctionType, IO, Int, String};
         use Internal::*;
         match self {
             IType | IInt | IString | IUnit | IBool => Type::Type,
@@ -139,22 +153,20 @@ impl Internal {
                 Rc::new(FunctionType(Rc::new(Type::Type), Rc::new(Type::Type))),
             ),
             Iunit => Type::Unit,
-            IDepProd => Type::DepProd {
-                family: Rc::new(Function::PartialApplication(
-                    FunctionConstant::TypeOfDepProd,
-                    Vec::new(),
-                )),
+            IDepProd => Type::DepProdPartialApp { 
+                fn_const: FunctionConstant::TypeOfDepProd,
+                args: Vec::new(),
             },
-            ImkPair => DepProd {
-                family: Rc::new(Function::PartialApplication(
-                    FunctionConstant::OutputTypeOfMkPair,
-                    Vec::new(),
-                )),
+            ImkPair => Type::DepProdPartialApp {
+                fn_const: FunctionConstant::OutputTypeOfMkPair,
+                args: Vec::new(),
             },
             IPairType => FunctionType(
                 Rc::new(Type::Type),
                 Rc::new(FunctionType(Rc::new(Type::Type), Rc::new(Type::Type))),
             ),
+            Ifirst => todo!(),
+            Isecond => todo!(),
             Itrue => Type::Bool(),
             Ifalse => Type::Bool(),
             Igetln => FunctionType(
@@ -171,11 +183,6 @@ impl Internal {
                 Rc::new(Int),
                 Rc::new(FunctionType(Rc::new(Int), Rc::new(Type::Bool()))),
             ),
-            Igetln => FunctionType(
-                Rc::new(FunctionType(Rc::new(String), Rc::new(IO))),
-                Rc::new(IO),
-            ),
-            Iprintln => FunctionType(Rc::new(String), Rc::new(IO)),
         }
     }
 
@@ -184,68 +191,70 @@ impl Internal {
         match self {
             Internal::IType => Val::Type(Rc::new(Type::Type)),
             Internal::IInt => Val::Type(Rc::new(Type::Int)),
-            Internal::Iadd => Val::Function(Function::PartialApplication(
+            Internal::Iadd => Val::PartialApplication(
                 FunctionConstant::Add,
                 Vec::new(),
-            )),
-            Internal::Imul => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Imul => Val::PartialApplication(
                 FunctionConstant::Mul,
                 Vec::new(),
-            )),
-            Internal::Isub => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Isub => Val::PartialApplication(
                 FunctionConstant::Sub,
                 Vec::new(),
-            )),
-            Internal::Ifun => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Ifun => Val::PartialApplication(
                 FunctionConstant::Fun,
                 Vec::new(),
-            )),
+            ),
             Internal::Iunit => Val::Unit,
             Internal::IUnit => Val::Type(Rc::new(Type::Unit)),
-            Internal::IDepProd => Val::Function(Function::PartialApplication(
+            Internal::IDepProd => Val::PartialApplication(
                 FunctionConstant::DepProd,
                 Vec::new(),
-            )),
-            Internal::ImkPair => Val::Function(Function::PartialApplication(
+            ),
+            Internal::ImkPair => Val::PartialApplication(
                 FunctionConstant::Pair,
                 Vec::new(),
-            )),
-            Internal::IPairType => Val::Function(Function::PartialApplication(
+            ),
+            Internal::IPairType => Val::PartialApplication(
                 FunctionConstant::PairType,
                 Vec::new(),
-            )),
+            ),
+            Internal::Ifirst => todo!(),
+            Internal::Isecond => todo!(),
             Internal::IBool => Val::Type(Rc::new(Type::Bool())),
             Internal::Itrue => Val::Enum("Bool".to_owned(), 1),
             Internal::Ifalse => Val::Enum("Bool".to_owned(), 0),
-            Internal::Ieq => Val::Function(Function::PartialApplication(
+            Internal::Ieq => Val::PartialApplication(
                 FunctionConstant::IntEq,
                 Vec::new(),
-            )),
-            Internal::Igetln => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Igetln => Val::PartialApplication(
                 FunctionConstant::GetLn,
                 Vec::new(),
-            )),
-            Internal::Iprintln => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Iprintln => Val::PartialApplication(
                 FunctionConstant::PrintLn,
                 Vec::new(),
-            )),
+            ),
             Internal::IString => Val::Type(Rc::new(Type::String)),
-            Internal::Ilt => Val::Function(Function::PartialApplication(
+            Internal::Ilt => Val::PartialApplication(
                 FunctionConstant::IntLt,
                 Vec::new(),
-            )),
-            Internal::Igt => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Igt => Val::PartialApplication(
                 FunctionConstant::IntGt,
                 Vec::new(),
-            )),
-            Internal::Ile => Val::Function(Function::PartialApplication(
+            ),
+            Internal::Ile => Val::PartialApplication(
                 FunctionConstant::IntLe,
                 Vec::new(),
-            )),
-            Internal::ISeq => Val::Function(Function::PartialApplication(
+            ),
+            Internal::ISeq => Val::PartialApplication(
                 FunctionConstant::Seq,
                 Vec::new(),
-            )),
+            ),
             Internal::IDone => Val::IO(runtime::IOAction::Done),
         }
     }
@@ -264,6 +273,8 @@ impl Internal {
             "DepProd" => Internal::IDepProd,
             "pair" => Internal::ImkPair,
             "PairType" => Internal::IPairType,
+            "first" => Internal::Ifirst,
+            "second" => Internal::Isecond,
             "true" => Internal::Itrue,
             "false" => Internal::Ifalse,
             "eq" => Internal::Ieq,
@@ -337,12 +348,31 @@ pub enum GenericError<'a> {
 }
 
 /// A `Program` that can be interpreted by `runtime::interpret`
+/// This is the object that is verified to be correct through type-checking.
+#[derive(Debug)]
 pub struct Program {
     names: Vec<String>,
     globals: Vec<Rc<Expr>>,
     // TODO: change this into &'a[Rc<Type>]
     global_types: Vec<Rc<Expr>>,
     evals: Vec<Rc<Expr>>,
+}
+
+impl Program {
+    pub fn new(names: Vec<String>, globals: Vec<Rc<Expr>>, global_types: Vec<Rc<Expr>>, evals: Vec<Rc<Expr>>) -> Program {
+        assert!(names.len() == globals.len());
+        assert!(names.len() == global_types.len());
+        Program {
+            names,
+            globals,
+            global_types,
+            evals
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
 }
 
 /// Big function that goes all the way for source code to final `Program`
@@ -362,18 +392,22 @@ pub fn make_program<'a>(src: &'a str) -> Result<Program, GenericError<'a>> {
         .map_err(GenericError::ResolutionError)?;
     println!("Global's types values resolved");
     // Type checking
-    let prog = Program {
-        names: prog.def_names,
-        globals,
-        global_types: resolved_types,
-        evals: resolved_evals,
-    };
+    let prog = Program::new(prog.def_names, globals, resolved_types, resolved_evals);
+    // let prog = Program {
+    //     names: prog.def_names,
+    //     globals,
+    //     global_types: resolved_types,
+    //     evals: resolved_evals,
+    // };
 
     type_check_program(&prog).map_err(GenericError::CheckerError)?;
     println!("Program is type-checked!");
 
     Ok(prog)
 }
+
+
+// pub fn main() {defuncd::main()}
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();

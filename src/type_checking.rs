@@ -1,15 +1,14 @@
 use std::rc::Rc;
 
 use crate::{
-    Atomic, Expr, Program, Type,
-    runtime::{Context, RuntimeError},
+    runtime::{Context, Function, RuntimeError}, Atomic, Expr, Program, Type
 };
 
 /// An error that could occur during type checking
 #[derive(Debug)]
 pub enum CheckerError {
     TypesMismatch { expected: Type, found: Type },
-    NotFunctionType { func: Expr, args: Expr },
+    NotFunctionType { func: Expr, args: Expr, found: Type },
     DifferentlyTypedBranches(Expr, Expr),
     TypeCalculationError(RuntimeError),
 }
@@ -70,6 +69,7 @@ fn check_type(
     expr: &Expr,
     signature: &Type,
 ) -> Result<(), CheckerError> {
+    println!("CHECKING {:?} AS {:?}", expr, signature);
     match expr {
         Expr::Apply(func, arg) => {
             // three options:
@@ -85,9 +85,23 @@ fn check_type(
                     check_type(ctx, arg, input_type.as_ref())?;
                     Ok(())
                 }
-                _ => Err(CheckerError::NotFunctionType {
+                Type::DepProdClosure { captured_vals, code } => {
+                    todo!("Implement type inference on dependend products over closures")
+                }
+                Type::DepProdPartialApp { fn_const, args } => {
+                    assert!(fn_const.args() == args.len() + 1);
+                    check_type(ctx, arg, &fn_const.input_type(args))?;
+                    let mut eval_ctx = Context::from_checking_ctx(ctx);
+                    let output_type = Function::<Expr>::PartialApplication(*fn_const, args.clone())
+                        .apply_to(&mut eval_ctx, &Rc::new(crate::runtime::Val::FreeVariable(1000)))?
+                        .get_as_type()?;
+                    types_match(signature, &output_type)?;
+                    Ok(())
+                }
+                t => Err(CheckerError::NotFunctionType {
                     func: func.as_ref().clone(),
                     args: arg.as_ref().clone(),
+                    found: t.clone()
                 }),
             }
         }
@@ -103,7 +117,17 @@ fn check_type(
                     assert_eq!(ctx.locals.pop(), Some(input_type.clone()));
                     Ok(())
                 }
-                _ => panic!("Make this checker error: checked non-function w/ function"),
+                Type::DepProdClosure { captured_vals, code } => {
+
+                    println!("WARNING: Type checking dependent products over closures not implemented\nThis could be incorrectly typed");
+                    dbg!(&captured_vals);
+                    dbg!(&code);
+                    Ok(())
+                }
+                Type::DepProdPartialApp { fn_const, args } => {
+                    todo!("Type checking dependent products over functions not implemented")
+                }
+                t => panic!("Checker error: Function \n\n`fn {:?} do {:?}`\n\n was expected to have type {:?}", input_type, output, signature),
             }
         }
         Expr::Atom(atomic) => {
@@ -141,15 +165,30 @@ fn check_type(
 
 /// Infers what the type of an expression is in a given context
 fn infer_type(ctx: &mut CheckingContext, expr: &Expr) -> Result<Rc<Type>, CheckerError> {
+    println!("INFERRING {:?}", expr);
     match expr {
         Expr::Apply(func, arg) => match infer_type(ctx, func)?.as_ref() {
             Type::FunctionType(input_type, output_type) => {
                 check_type(ctx, arg, input_type)?;
                 return Ok(output_type.clone());
             }
-            _ => Err(CheckerError::NotFunctionType {
+            Type::DepProdPartialApp { fn_const, args } => {
+                let input_type = fn_const.input_type(args);
+                check_type(ctx, arg, &input_type)?;
+                let mut int_ctx = Context::from_checking_ctx(ctx);
+                let computed_arg = int_ctx.interpret(arg)?;
+                let mut args = args.clone();
+                args.push(computed_arg);
+                Ok(fn_const.reduce(args)?.get_as_type()?)
+
+            }
+            Type::DepProdClosure { captured_vals, code } => {
+                todo!()
+            }
+            t => Err(CheckerError::NotFunctionType {
                 func: func.as_ref().clone(),
                 args: arg.as_ref().clone(),
+                found: t.clone(),
             }),
         },
         Expr::Function { input_type, output } => {
@@ -224,6 +263,16 @@ pub fn type_check_program(prog: &Program) -> Result<(), CheckerError> {
             locals: Vec::new(),
         };
         check_type(&mut new_ctx, global, global_type.as_ref())?
+    }
+
+    for to_eval in prog.evals.iter() {
+        let mut new_ctx = CheckingContext {
+            globals: &prog.globals,
+            global_types: &prog.global_types,
+            locals: Vec::new(),
+        };
+        // we infer the type but we kinda ignore it after :/
+        infer_type(&mut new_ctx, to_eval)?;
     }
     Ok(())
 }
