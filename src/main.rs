@@ -348,6 +348,7 @@ pub enum GenericError<'a> {
 }
 
 /// A `Program` that can be interpreted by `runtime::interpret`
+/// This is the object that is verified to be correct through type-checking.
 #[derive(Debug)]
 pub struct Program {
     names: Vec<String>,
@@ -355,6 +356,23 @@ pub struct Program {
     // TODO: change this into &'a[Rc<Type>]
     global_types: Vec<Rc<Expr>>,
     evals: Vec<Rc<Expr>>,
+}
+
+impl Program {
+    pub fn new(names: Vec<String>, globals: Vec<Rc<Expr>>, global_types: Vec<Rc<Expr>>, evals: Vec<Rc<Expr>>) -> Program {
+        assert!(names.len() == globals.len());
+        assert!(names.len() == global_types.len());
+        Program {
+            names,
+            globals,
+            global_types,
+            evals
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
 }
 
 /// Big function that goes all the way for source code to final `Program`
@@ -374,18 +392,22 @@ pub fn make_program<'a>(src: &'a str) -> Result<Program, GenericError<'a>> {
         .map_err(GenericError::ResolutionError)?;
     println!("Global's types values resolved");
     // Type checking
-    let prog = Program {
-        names: prog.def_names,
-        globals,
-        global_types: resolved_types,
-        evals: resolved_evals,
-    };
+    let prog = Program::new(prog.def_names, globals, resolved_types, resolved_evals);
+    // let prog = Program {
+    //     names: prog.def_names,
+    //     globals,
+    //     global_types: resolved_types,
+    //     evals: resolved_evals,
+    // };
 
     type_check_program(&prog).map_err(GenericError::CheckerError)?;
     println!("Program is type-checked!");
 
     Ok(prog)
 }
+
+
+// pub fn main() {defuncd::main()}
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
